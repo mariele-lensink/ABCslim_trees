@@ -1,0 +1,21 @@
+# --- outputs (never commit) ---
+output/**
+!output/**/.gitkeep
+
+# --- logs & run artifacts ---
+*.log
+*.out
+*.err
+*.trees
+*.vcf
+*.vcf.gz
+*.tbi
+
+# --- OS/editor junk ---
+.DS_Store
+.vscode/
+.idea/
+
+# --- python ---
+__pycache__/
+*.pyc

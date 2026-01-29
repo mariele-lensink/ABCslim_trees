@@ -1,0 +1,17 @@
+name: abc_trees
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - scikit-allel
+  - tskit
+  - msprime
+  - pyslim
+  - cyvcf2
+  - matplotlib
+  - tqdm

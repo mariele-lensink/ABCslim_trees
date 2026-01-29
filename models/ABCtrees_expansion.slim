@@ -1,0 +1,127 @@
+// ABCtrees_expansion.slim
+// Tree-seq + deleterious-forward-only + instantaneous expansion
+//
+// Required -d parameters:
+//   ID, gmu, imu, gd, id, gdfe, idfe
+//
+// Optional -d parameters:
+//   END (default 5000; must be <= 20000)
+//   OUTTREES (default ".")
+//   SIMPLIFY_INTERVAL (default 200)
+//   N_END (default 1135)        : present-day population size (anchor across models)
+//   SELF (default 0.98)
+//   GENOMEINFO_DIR (default "genomeinfo")
+//
+// Demography -d parameters (optional):
+//   T_EXP (default 3000)        : expansion generation (forward time)
+//   EXP_MULT (default 3.0)      : N_END = EXP_MULT * N_ANC  (so N_ANC = N_END / EXP_MULT)
+
+initialize() {
+
+    // Defaults
+    if (!exists("END")) defineConstant("END", 5000);
+    if (!exists("OUTTREES")) defineConstant("OUTTREES", ".");
+    if (!exists("SIMPLIFY_INTERVAL")) defineConstant("SIMPLIFY_INTERVAL", 200);
+    if (!exists("N_END")) defineConstant("N_END", 1135);
+    if (!exists("SELF")) defineConstant("SELF", 0.98);
+    if (!exists("GENOMEINFO_DIR")) defineConstant("GENOMEINFO_DIR", "genomeinfo");
+
+    // Demography defaults
+    if (!exists("T_EXP")) defineConstant("T_EXP", 3000);
+    if (!exists("EXP_MULT")) defineConstant("EXP_MULT", 3.0);
+
+    // Checks / guards
+    if (END > 20000) stop("END must be <= 20000 in this script.");
+    if (T_EXP < 1) stop("T_EXP must be >= 1.");
+    if (T_EXP > END) stop("Require T_EXP <= END (expansion must occur before output).");
+    if (EXP_MULT < 1.0) stop("EXP_MULT must be >= 1.0.");
+
+    // Read intervals
+    genes = readFile(paste(GENOMEINFO_DIR, "/gene100.csv", sep=""));
+    gene_starts = NULL;
+    gene_stops  = NULL;
+    for (line in genes) {
+        components = strsplit(line, ",");
+        if (size(components) < 2) next;
+        start = asInteger(components[0]);
+        stop  = asInteger(components[1]);
+        if (isNULL(start) | isNULL(stop)) next;
+        gene_starts = c(gene_starts, start);
+        gene_stops  = c(gene_stops,  stop);
+    }
+
+    intergenes = readFile(paste(GENOMEINFO_DIR, "/intergene100.csv", sep=""));
+    inter_starts = NULL;
+    inter_stops  = NULL;
+    for (line in intergenes) {
+        components = strsplit(line, ",");
+        if (size(components) < 2) next;
+        start = asInteger(components[0]);
+        stop  = asInteger(components[1]);
+        if (isNULL(start) | isNULL(stop)) next;
+        inter_starts = c(inter_starts, start);
+        inter_stops  = c(inter_stops,  stop);
+    }
+
+    defineConstant("L", max(gene_stops) + 1);
+
+    // Must precede tree-seq init
+    initializeSLiMOptions(nucleotideBased=T);
+
+    // Tree-seq recording
+    initializeTreeSeq();
+    initializeAncestralNucleotides(randomNucleotides(L));
+
+    // Deleterious mutation types only (forward)
+    initializeMutationTypeNuc("m2", 0.1, "g", gdfe, 0.270);
+    initializeMutationTypeNuc("m3", 0.1, "g", idfe, 0.270);
+
+    // Effective deleterious proportions
+    gd_eff = max(0.0, min(1.0, gd));
+    id_eff = max(0.0, min(1.0, id));
+
+    gmu_del = gmu * gd_eff;
+    imu_del = imu * id_eff;
+
+    initializeGenomicElementType("g1", m2, 1.0, mmJukesCantor(gmu_del));
+    initializeGenomicElementType("g2", m3, 1.0, mmJukesCantor(imu_del));
+
+    initializeGenomicElement(g1, gene_starts, gene_stops);
+    initializeGenomicElement(g2, inter_starts, inter_stops);
+
+    initializeRecombinationRate(1.2e-5);
+
+    // Compute ancestral size from N_END and EXP_MULT
+    ancN = asInteger(N_END / EXP_MULT);
+    if (ancN < 2) ancN = 2;
+    defineConstant("N_ANC", ancN);
+
+}
+
+// Start in ancestral size (smaller), expand to N_END at T_EXP
+1 late() {
+    sim.addSubpop("p1", N_ANC);
+    p1.setSelfingRate(SELF);
+}
+
+// Main loop + simplify + expansion + output at END
+1:20000 late() {
+    gen = community.tick;
+
+    // Expansion event (variable time; must be checked here)
+    if (gen == T_EXP) {
+        p1.setSubpopulationSize(N_END);
+    }
+
+    if (SIMPLIFY_INTERVAL > 0) {
+        if (gen % SIMPLIFY_INTERVAL == 0)
+            sim.treeSeqSimplify();
+    }
+
+    if (gen == END) {
+        catn("Simulation reached generation " + END + " for ID " + ID);
+        sim.treeSeqSimplify();
+        sim.treeSeqOutput(paste(OUTTREES, "/", ID, ".trees", sep=""));
+        sim.simulationFinished();
+    }
+}
