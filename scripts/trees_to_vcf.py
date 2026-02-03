@@ -80,7 +80,8 @@ def main():
     gene_intervals = read_intervals(args.gene_csv)
     inter_intervals = read_intervals(args.intergene_csv)
 
-    ts = pyslim.load(args.trees)
+    ts = tskit.load(args.trees)
+
 #fill in the missing deep ancestry by recapitation
 #For summaries like SFS and Tajima’s D, deep ancestry affects baseline diversity and the allele frequency spectrum.
     if args.recapitate:
@@ -102,7 +103,7 @@ def main():
 
     os.makedirs(os.path.dirname(args.out_vcf) or ".", exist_ok=True)
     with open(args.out_vcf, "w") as f:
-        ts.write_vcf(f, ploidy=2)
+        ts.write_vcf(f)
 
     print(f"✅ wrote {args.out_vcf}")
 
