@@ -4,11 +4,12 @@
 //   ID, gmu, imu, gd, id, gdfe, idfe
 //
 // Optional -d parameters:
-//   END (default 5000)
+//   END (default 40000)
 //   OUTTREES (default ".")
 //   SIMPLIFY_INTERVAL (default 200)
-//   NPOP (default 1135)
+//   NPOP (default computed from Ne_real/Q)
 //   SELF (default 0.98)
+//	  Q (defaultd 50)
 //   GENOMEINFO_DIR (default "genomeinfo")  // directory containing gene100.csv + intergene100.csv
 //   GENEFILE (overrides GENOMEINFO_DIR)
 //   INTERFILE (overrides GENOMEINFO_DIR)
@@ -18,12 +19,18 @@ initialize() {
     // ----------------------------
     // Defaults for optional params
     // ----------------------------
-    if (!exists("END")) defineConstant("END", 5000);
+    if (!exists("Q")) defineConstant("Q", 50.0);
+    if (!exists("NE_REAL"))defineConstant("NE_REAL", 300000.0);
+    if (!exists("R_REAL")) defineConstant("R_REAL", 4e-8);
+
+    if (!exists("END")) defineConstant("END", 40000);
     if (!exists("OUTTREES")) defineConstant("OUTTREES", ".");
     if (!exists("SIMPLIFY_INTERVAL")) defineConstant("SIMPLIFY_INTERVAL", 200);
-    if (!exists("NPOP")) defineConstant("NPOP", 1135);
     if (!exists("SELF")) defineConstant("SELF", 0.98);
 
+    // If NPOP not provided, compute from Ne_real / Q
+    if (!exists("NPOP")) defineConstant("NPOP", asInteger(round(NE_REAL / Q)));
+    
     // Portable genomeinfo paths:
     // By default, look for ./genomeinfo/gene100.csv and ./genomeinfo/intergene100.csv
     if (!exists("GENOMEINFO_DIR")) defineConstant("GENOMEINFO_DIR", "genomeinfo");
@@ -84,26 +91,57 @@ initialize() {
     // Ancestral nucleotides
     initializeAncestralNucleotides(randomNucleotides(L));
 
+// ----------------------------
+    // Mutation types (deleterious-only forward)
+    //
+    // IMPORTANT: we treat gdfe/idfe as BIOLOGICAL means (negative).
+    // We scale selection coefficients by Q to preserve Ne*s.
+    // Shape is fixed at 0.270 (your choice / literature-aligned).
+    // ----------------------------
+
+ // Scale mean selection coefficients for simulation
+    gdfe_sim = gdfe * Q;
+    idfe_sim = idfe * Q;
+
     // ----------------------------
     // Mutation types (deleterious-only forward)
     // ----------------------------
     initializeMutationTypeNuc("m2", 0.1, "g", gdfe, 0.270);  // gene deleterious
     initializeMutationTypeNuc("m3", 0.1, "g", idfe, 0.270);  // intergene deleterious
 
-    // Clamp gd/id into [0,1] for safety
+    // Clamp gd/id into [0,1] for safety (fractions not scaled)
     gd_eff = max(0.0, min(1.0, gd));
     id_eff = max(0.0, min(1.0, id));
 
-    gmu_del = gmu * gd_eff;
-    imu_del = imu * id_eff;
-
-    initializeGenomicElementType("g1", m2,1.0, mmJukesCantor(gmu_del));
-    initializeGenomicElementType("g2", m3,1.0, mmJukesCantor(imu_del));
+    // Scale mutation rates for simulation
+    // gmu/imu are BIOLOGICAL totals; only deleterious component is simulated forward
+    gmu_del_sim = (gmu * gd_eff) * Q;
+    imu_del_sim = (imu * id_eff) * Q;
+       
+    initializeGenomicElementType("g1", m2,1.0, mmJukesCantor(gmu_del_sim));
+    initializeGenomicElementType("g2", m3,1.0, mmJukesCantor(imu_del_sim));
 
     initializeGenomicElement(g1, gene_starts, gene_stops);
     initializeGenomicElement(g2, inter_starts, inter_stops);
 
-    initializeRecombinationRate(1.2e-5);
+	 //scale recombination rate for simulation
+    initializeRecombinationRate(R_REAL * Q);
+}
+
+// ----------------------------
+// Truncation guardrail: prevent impossible s < -1
+// (Does NOT change the prior on gdfe/idfe; only trims extreme tail draws.)
+// ----------------------------
+mutation(m2) {
+    if (mut.selectionCoeff < -1.0)
+        mut.setSelectionCoeff(-1.0);
+    return T;
+}
+
+mutation(m3) {
+    if (mut.selectionCoeff < -1.0)
+        mut.setSelectionCoeff(-1.0);
+    return T;
 }
 
 1 late() {
