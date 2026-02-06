@@ -1,0 +1,131 @@
+// ABCtrees_bottleneck.slim
+// Tree-seq + deleterious-forward-only + bottleneck/recovery
+//
+// Required -d parameters:
+//   ID, gmu, imu, gd, id, gdfe, idfe
+//
+// Optional -d parameters:
+//   END (default 5000; must be <= 20000)
+//   OUTTREES (default ".")
+//   SIMPLIFY_INTERVAL (default 200)
+//   N_END (default 1135)         : present-day population size (anchor across models)
+//   SELF (default 0.98)
+//   GENOMEINFO_DIR (default "genomeinfo")
+//
+// Demography -d parameters (optional):
+//   T_BOT (default 2000)         : bottleneck start generation (forward time)
+//   T_REC (default 3000)         : recovery generation
+//   BOT_FRAC (default 0.2)       : bottleneck fraction of N_END
+
+initialize() {
+
+    // Defaults
+    if (!exists("END")) defineConstant("END", 5000);
+    if (!exists("OUTTREES")) defineConstant("OUTTREES", ".");
+    if (!exists("SIMPLIFY_INTERVAL")) defineConstant("SIMPLIFY_INTERVAL", 200);
+    if (!exists("N_END")) defineConstant("N_END", 1135);
+    if (!exists("SELF")) defineConstant("SELF", 0.98);
+    if (!exists("GENOMEINFO_DIR")) defineConstant("GENOMEINFO_DIR", "genomeinfo");
+
+    // Demography defaults
+    if (!exists("T_BOT")) defineConstant("T_BOT", 2000);
+    if (!exists("T_REC")) defineConstant("T_REC", 3000);
+    if (!exists("BOT_FRAC")) defineConstant("BOT_FRAC", 0.2);
+
+    // Basic checks / guards
+    if (END > 20000) stop("END must be <= 20000 in this script.");
+    if (T_BOT < 1 | T_REC < 1) stop("T_BOT and T_REC must be >= 1.");
+    if (T_BOT >= T_REC) stop("Require T_BOT < T_REC.");
+    if (T_REC > END) stop("Require T_REC <= END (recovery must occur before output).");
+
+    // Read intervals
+    genes = readFile(paste(GENOMEINFO_DIR, "/gene100.csv", sep=""));
+    gene_starts = NULL;
+    gene_stops  = NULL;
+    for (line in genes) {
+        components = strsplit(line, ",");
+        if (size(components) < 2) next;
+        start = asInteger(components[0]);
+        stop  = asInteger(components[1]);
+        if (isNULL(start) | isNULL(stop)) next;
+        gene_starts = c(gene_starts, start);
+        gene_stops  = c(gene_stops,  stop);
+    }
+
+    intergenes = readFile(paste(GENOMEINFO_DIR, "/intergene100.csv", sep=""));
+    inter_starts = NULL;
+    inter_stops  = NULL;
+    for (line in intergenes) {
+        components = strsplit(line, ",");
+        if (size(components) < 2) next;
+        start = asInteger(components[0]);
+        stop  = asInteger(components[1]);
+        if (isNULL(start) | isNULL(stop)) next;
+        inter_starts = c(inter_starts, start);
+        inter_stops  = c(inter_stops,  stop);
+    }
+
+    defineConstant("L", max(gene_stops) + 1);
+
+    // Must precede tree-seq init
+    initializeSLiMOptions(nucleotideBased=T);
+
+    // Tree-seq recording
+    initializeTreeSeq();
+    initializeAncestralNucleotides(randomNucleotides(L));
+
+    // Deleterious mutation types only (forward)
+    initializeMutationTypeNuc("m2", 0.1, "g", gdfe, 0.270);
+    initializeMutationTypeNuc("m3", 0.1, "g", idfe, 0.270);
+
+    // Effective deleterious proportions
+    gd_eff = max(0.0, min(1.0, gd));
+    id_eff = max(0.0, min(1.0, id));
+
+    gmu_del = gmu * gd_eff;
+    imu_del = imu * id_eff;
+
+    initializeGenomicElementType("g1", m2, 1.0, mmJukesCantor(gmu_del));
+    initializeGenomicElementType("g2", m3, 1.0, mmJukesCantor(imu_del));
+
+    initializeGenomicElement(g1, gene_starts, gene_stops);
+    initializeGenomicElement(g2, inter_starts, inter_stops);
+
+    initializeRecombinationRate(1.2e-5);
+}
+// Start at present-day size anchor
+1 late() {
+    sim.addSubpop("p1", N_END);
+    p1.setSelfingRate(SELF);
+}
+
+// Main loop + simplify + demography + output at END
+1:20000 late() {
+    gen = community.tick;
+
+    // --- bottleneck / recovery (variable times, so do it here) ---
+    if (gen == T_BOT) {
+        botFrac = max(0.001, min(1.0, BOT_FRAC));
+        botN = asInteger(max(2.0, round(N_END * botFrac)));
+        p1.setSubpopulationSize(botN);
+    }
+
+    if (gen == T_REC) {
+        p1.setSubpopulationSize(N_END);
+    }
+
+    // --- periodic simplify ---
+    if (SIMPLIFY_INTERVAL > 0) {
+        if (gen % SIMPLIFY_INTERVAL == 0)
+            sim.treeSeqSimplify();
+    }
+
+    // --- output ---
+    if (gen == END) {
+        catn("Simulation reached generation " + END + " for ID " + ID);
+        sim.treeSeqSimplify();
+        sim.treeSeqOutput(paste(OUTTREES, "/", ID, ".trees", sep=""));
+        sim.simulationFinished();
+    }
+}
+
