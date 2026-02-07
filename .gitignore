@@ -19,3 +19,6 @@ output/**
 # --- python ---
 __pycache__/
 *.pyc
+.Rproj.user
+
+ABCslim_trees.Rproj 

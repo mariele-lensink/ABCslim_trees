@@ -106,8 +106,8 @@ initialize() {
     // ----------------------------
     // Mutation types (deleterious-only forward)
     // ----------------------------
-    initializeMutationTypeNuc("m2", 0.1, "g", gdfe, 0.270);  // gene deleterious
-    initializeMutationTypeNuc("m3", 0.1, "g", idfe, 0.270);  // intergene deleterious
+    initializeMutationTypeNuc("m2", 0.1, "g", gdfe_sim, 0.270);  // gene deleterious
+    initializeMutationTypeNuc("m3", 0.1, "g", idfe_sim, 0.270);  // intergene deleterious
 
     // Clamp gd/id into [0,1] for safety (fractions not scaled)
     gd_eff = max(0.0, min(1.0, gd));
@@ -150,7 +150,7 @@ mutation(m3) {
 }
 
 // Periodic simplify + end condition (END is configurable)
-1:20000 late() {
+1:40000 late() {
 
     gen = community.tick;
 
