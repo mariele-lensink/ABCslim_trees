@@ -34,11 +34,11 @@ conda activate abc_trees
 : "${EXP_FRAC_TEXP:=0.75}"        # expansion time = 0.75*END
 
 # Script paths
-: "${SCRIPT_CONST:=/home/mlensink/slimsimulations/ABCslim/ABC_slim/models/ABCtrees.slim}"
-: "${SCRIPT_BOT:=/home/mlensink/slimsimulations/ABCslim/ABC_slim/models/ABCtrees_bottleneck.slim}"
-: "${SCRIPT_EXP:=/home/mlensink/slimsimulations/ABCslim/ABC_slim/models/ABCtrees_expansion.slim}"
+: "${SCRIPT_CONST:=/home/mlensink/slimsimulations/ABCslim_trees/models/ABCtrees.slim}"
+: "${SCRIPT_BOT:=/home/mlensink/slimsimulations/ABCslim_trees/models/ABCtrees_bottleneck.slim}"
+: "${SCRIPT_EXP:=/home/mlensink/slimsimulations/ABCslim_trees/models/ABCtrees_expansion.slim}"
 
-BASE_OUT=/home/mlensink/slimsimulations/ABCslim_trees/
+BASE_OUT=/home/mlensink/slimsimulations/ABCslim_trees/output/
 LOGDIR=/home/mlensink/slimsimulations/ABCslim_trees/logs/bgs_test/
 mkdir -p "$LOGDIR"
 
@@ -78,9 +78,9 @@ PY
 )
 
 # Output directories per model + END
-OUT_CONST="${BASE_OUT}/constant/END${END}"
-OUT_BOT="${BASE_OUT}/bottleneck/END${END}"
-OUT_EXP="${BASE_OUT}/expansion/END${END}"
+OUT_CONST="${BASE_OUT}constant/END${END}"
+OUT_BOT="${BASE_OUT}bottleneck/END${END}"
+OUT_EXP="${BASE_OUT}expansion/END${END}"
 mkdir -p "$OUT_CONST" "$OUT_BOT" "$OUT_EXP"
 
 echo "JOB=$SLURM_JOB_ID TASK=$SLURM_ARRAY_TASK_ID LINE=$LINE ID=$ID END=$END"
@@ -92,7 +92,7 @@ echo "Demography: T_BOT=$T_BOT T_REC=$T_REC BOT_FRAC=$BOT_FRAC | T_EXP=$T_EXP EX
 # ----------------------------
 run_const() {
   slim \
-    -d "ID=${ID}_C_END${END}" \
+    -d "ID=${ID}" \
     -d "OUTTREES='${OUT_CONST}'" \
     -d END=${END} \
     -d SIMPLIFY_INTERVAL=${SIMPLIFY_INTERVAL} \
@@ -104,7 +104,7 @@ run_const() {
 
 run_bot() {
   slim \
-    -d "ID=${ID}_B_END${END}" \
+    -d "ID=${ID}" \
     -d "OUTTREES='${OUT_BOT}'" \
     -d END=${END} \
     -d SIMPLIFY_INTERVAL=${SIMPLIFY_INTERVAL} \
@@ -117,7 +117,7 @@ run_bot() {
 
 run_exp() {
   slim \
-    -d "ID=${ID}_E_END${END}" \
+    -d "ID=${ID}" \
     -d "OUTTREES='${OUT_EXP}'" \
     -d END=${END} \
     -d SIMPLIFY_INTERVAL=${SIMPLIFY_INTERVAL} \
