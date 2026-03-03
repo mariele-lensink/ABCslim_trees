@@ -15,8 +15,7 @@
 set -euo pipefail
 
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate abc_trees
-
+conda activate abc_trees_vcf
 : "${PARAM_FILE:=/home/mlensink/slimsimulations/ABCslim_trees/priors/priors_2.6.25.csv}"
 : "${OFFSET:=0}"   # set to 0 for first half, 50000 for second half, etc.
 
