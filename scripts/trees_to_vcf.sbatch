@@ -28,7 +28,7 @@ mkdir -p "$DERIVED_DIR"
 # These must point to the interval CSVs your script expects (2-col start,stop; no header)
 : "${GENE_CSV:=/home/mlensink/slimsimulations/ABCslim_trees/genomeinfo/gene100.csv}"
 : "${INTERGENE_CSV:=/home/mlensink/slimsimulations/ABCslim_trees/genomeinfo/intergene100.csv}"
-: "${L:=120000}"  # <-- set this to your simulated chromosome/region length
+: "${L:=377209}"  # <-- set this to your simulated chromosome/region length
 
 # Recapitation parameters (used only if RECAP=1)
 : "${RECAP:=1}"
