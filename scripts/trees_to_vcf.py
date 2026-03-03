@@ -95,7 +95,7 @@ def main():
     # If the tree sequence has >1 population, msprime requires an explicit demography.
         demography = msprime.Demography()
         for j in range(ts.num_populations):
-            demography.add_population(name=f"p_{j}", initial_size=args.Ne)
+            demography.add_population(name=f"pop_{j}", initial_size=args.Ne)
 
         ts = msprime.sim_ancestry(
             initial_state=ts,
