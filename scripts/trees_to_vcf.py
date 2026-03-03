@@ -84,18 +84,16 @@ def main():
 
     ts = tskit.load(args.trees)
 
-#fill in the missing deep ancestry by recapitation
-#For summaries like SFS and Tajima’s D, deep ancestry affects baseline diversity and the allele frequency spectrum.
+    #fill in the missing deep ancestry by recapitation
+    #For summaries like SFS and Tajima’s D, deep ancestry affects baseline diversity and the allele frequency spectrum.
     if args.recapitate:
-        # SLiM tree sequences often store time in "ticks"; treat them as generations for msprime
         tables = ts.dump_tables()
         tables.time_units = "generations"
         ts = tables.tree_sequence()
 
-    # If the tree sequence has >1 population, msprime requires an explicit demography.
-        demography = msprime.Demography()
-        for j in range(ts.num_populations):
-            demography.add_population(name=f"pop_{j}", initial_size=args.Ne)
+        demography = msprime.Demography.from_tree_sequence(ts)
+        for pop in demography.populations:
+            pop.initial_size = args.Ne
 
         ts = msprime.sim_ancestry(
             initial_state=ts,
