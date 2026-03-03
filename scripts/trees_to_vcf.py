@@ -59,6 +59,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--trees", required=True)
     ap.add_argument("--out_vcf", required=True)
+    ap.add_argument("--out_trees", default=None)
     ap.add_argument("--gene_csv", required=True)
     ap.add_argument("--intergene_csv", required=True)
     ap.add_argument("--L", type=int, required=True)
@@ -66,6 +67,7 @@ def main():
     ap.add_argument("--recapitate", action="store_true")
     ap.add_argument("--Ne", type=float, default=1135.0)
     ap.add_argument("--recomb", type=float, default=1.2e-5)
+    ap.add_argument("--Q", type=float, default=1.0)
 
     ap.add_argument("--gmu", type=float, required=True)
     ap.add_argument("--imu", type=float, required=True)
@@ -93,14 +95,22 @@ def main():
         )
 
     # Overlay neutral mutations (keep existing deleterious ones)
-    gmu_neu = args.gmu * (1.0 - args.gd)
-    imu_neu = args.imu * (1.0 - args.idp)
+    gmu_sim = args.gmu * args.Q
+    imu_sim = args.imu * args.Q
+    
+    gmu_neu = gmu_sim * (1.0 - args.gd)
+    imu_neu = imu_sim * (1.0 - args.idp)
     rm = make_rate_map(args.L, gene_intervals, inter_intervals, gmu_neu, imu_neu)
     ts = msprime.mutate(ts, rate=rm, keep=True, random_seed=args.seed)
 
     if args.biallelic_only:
         ts = keep_biallelic_only(ts)
 
+    if args.out_trees is not None:
+        os.makedirs(os.path.dirname(args.out_trees) or ".", exist_ok=True)
+        ts.dump(args.out_trees)
+        print(f"🌳 wrote derived trees {args.out_trees}")
+    
     os.makedirs(os.path.dirname(args.out_vcf) or ".", exist_ok=True)
     with open(args.out_vcf, "w") as f:
         ts.write_vcf(f)
