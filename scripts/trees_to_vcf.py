@@ -87,11 +87,11 @@ def main():
 #fill in the missing deep ancestry by recapitation
 #For summaries like SFS and Tajima’s D, deep ancestry affects baseline diversity and the allele frequency spectrum.
     if args.recapitate:
-        ts = pyslim.recapitate(
-            ts,
+        ts = msprime.sim_ancestry(
+            initial_state=ts,
             recombination_rate=args.recomb,
-            Ne=args.Ne,
-            random_seed=args.seed
+            population_size=args.Ne,
+            random_seed=args.seed,
         )
 
     # Overlay neutral mutations (keep existing deleterious ones)
@@ -105,7 +105,7 @@ def main():
 
     if args.biallelic_only:
         ts = keep_biallelic_only(ts)
-
+ 
     if args.out_trees is not None:
         os.makedirs(os.path.dirname(args.out_trees) or ".", exist_ok=True)
         ts.dump(args.out_trees)
