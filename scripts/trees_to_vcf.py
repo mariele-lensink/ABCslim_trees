@@ -87,11 +87,11 @@ def main():
 #fill in the missing deep ancestry by recapitation
 #For summaries like SFS and Tajima’s D, deep ancestry affects baseline diversity and the allele frequency spectrum.
     if args.recapitate:
-    ts = pyslim.recapitate(
-        ts,
-        recombination_rate=args.recomb,
-        Ne=args.Ne,
-        random_seed=args.seed
+        ts = pyslim.recapitate(
+            ts,
+            recombination_rate=args.recomb,
+            Ne=args.Ne,
+            random_seed=args.seed
     )
 
     # Overlay neutral mutations (keep existing deleterious ones)
