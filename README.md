@@ -113,4 +113,43 @@ Each array task reads exactly one row from `PARAM_FILE`.
 **Internally converted to:**
 - `T_EXP = round(END × EXP_FRAC_TEXP)`
 
+---
+
+## Demography via demes YAML files
+
+A new SLURM array script (`scripts/demes_demography_array.sbatch`) allows simulations
+to be launched with **bottleneck** or **expansion** models whose timing and
+strength are read from a [demes](https://popsim-consortium.github.io/demes-specs/)
+YAML description. This is particularly useful when the demographic model is
+defined in an external workflow or inferred using “demes” tools.
+
+### How it works
+
+1. The job array reads the same row from `PARAM_FILE` as before, ensuring that
+   the genic/intergenic parameters used for a given `ID` match those that
+   produced the corresponding constant-tree file in
+   `output/constant/trees`.
+2. Two optional environment variables (`DEMES_BOT_YAML` and
+   `DEMES_EXP_YAML`) may be set at submit time. Each points to a YAML file
+   containing a single deme with `epochs` describing the event history.
+3. A small inline Python snippet (using `demes`/`PyYAML`) parses the YAML and
+   converts epoch start times and population sizes into the numeric flags
+   `T_BOT`, `T_REC`, `BOT_FRAC` or `T_EXP`, `EXP_MULT` that the SLiM scripts
+   expect.
+4. The script also passes the corresponding constant-tree path
+   (`output/constant/trees/<ID>.trees`) to the SLiM model via the new
+   `INITTREES` flag. The modified `ABCtrees_bottleneck.slim` and
+   `ABCtrees_expansion.slim` scripts will read this tree sequence and resume
+   from it instead of starting from scratch.
+
+### Submission example
+
+```bash
+sbatch --export=ALL,DEMES_BOT_YAML=/path/to/bottleneck.yaml,DEMES_EXP_YAML=/path/to/expansion.yaml \
+       scripts/demes_demography_array.sbatch
+```
+
+Override other options (e.g. `END`, `OFFSET`, `CONST_TREES_DIR`) in the usual
+way using `--export`.
+
 

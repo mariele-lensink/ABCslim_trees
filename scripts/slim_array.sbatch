@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=4G
 #SBATCH --time=5-00:00:00
-#SBATCH --partition=bmm
+#SBATCH --partition=bml
 #SBATCH --account=gmonroegrp
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=melensink@ucdavis.edu

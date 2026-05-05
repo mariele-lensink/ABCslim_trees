@@ -21,4 +21,6 @@ __pycache__/
 *.pyc
 .Rproj.user
 
-ABCslim_trees.Rproj 
+ABCslim_trees.Rproj
+
+logs/

@@ -16,3 +16,6 @@ dependencies:
   - cyvcf2
   - matplotlib
   - tqdm
+  # added for demography parsing
+  - demes
+  - pyyaml

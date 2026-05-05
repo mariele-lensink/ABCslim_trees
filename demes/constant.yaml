@@ -1,0 +1,7 @@
+description: Constant-size single-deme model for ABCslim_trees.
+time_units: generations
+generation_time: 1
+demes:
+  - name: pop
+    epochs:
+      - start_size: 6000

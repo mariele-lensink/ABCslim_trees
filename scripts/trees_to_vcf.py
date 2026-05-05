@@ -13,6 +13,13 @@ def read_intervals(csv_path):
     stops  = df.iloc[:, 1].astype(int).to_numpy()
     return list(zip(starts, stops))
 
+
+def infer_region_length(gene_intervals, inter_intervals):
+    all_intervals = gene_intervals + inter_intervals
+    if not all_intervals:
+        raise ValueError("No intervals found in gene/intergene CSVs")
+    return max(stop for _, stop in all_intervals) + 1
+
 def make_rate_map(L, gene_intervals, inter_intervals, gene_rate, inter_rate):
     # Build breakpoints from interval boundaries (half-open [start, stop+1))
     breaks = {0, L}
@@ -58,11 +65,11 @@ def keep_biallelic_only(ts):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--trees", required=True)
-    ap.add_argument("--out_vcf", required=True)
+    ap.add_argument("--out_vcf", default=None)
     ap.add_argument("--out_trees", default=None)
     ap.add_argument("--gene_csv", required=True)
     ap.add_argument("--intergene_csv", required=True)
-    ap.add_argument("--L", type=int, required=True)
+    ap.add_argument("--L", type=int, default=None)
 
     ap.add_argument("--recapitate", action="store_true")
     ap.add_argument("--Ne", type=float, default=1135.0)
@@ -81,6 +88,7 @@ def main():
     #neutral mutation rates are independent of eachother between genic and intergenic regions
     gene_intervals = read_intervals(args.gene_csv)
     inter_intervals = read_intervals(args.intergene_csv)
+    L = args.L if args.L is not None else infer_region_length(gene_intervals, inter_intervals)
 
     ts = tskit.load(args.trees)
 
@@ -108,7 +116,7 @@ def main():
     
     gmu_neu = gmu_sim * (1.0 - args.gd)
     imu_neu = imu_sim * (1.0 - args.idp)
-    rm = make_rate_map(args.L, gene_intervals, inter_intervals, gmu_neu, imu_neu)
+    rm = make_rate_map(L, gene_intervals, inter_intervals, gmu_neu, imu_neu)
     ts = msprime.mutate(ts, rate=rm, keep=True, random_seed=args.seed)
 
     if args.biallelic_only:
@@ -119,11 +127,12 @@ def main():
         ts.dump(args.out_trees)
         print(f"🌳 wrote derived trees {args.out_trees}")
     
-    os.makedirs(os.path.dirname(args.out_vcf) or ".", exist_ok=True)
-    with open(args.out_vcf, "w") as f:
-        ts.write_vcf(f)
+    if args.out_vcf is not None:
+        os.makedirs(os.path.dirname(args.out_vcf) or ".", exist_ok=True)
+        with open(args.out_vcf, "w") as f:
+            ts.write_vcf(f)
 
-    print(f"✅ wrote {args.out_vcf}")
+        print(f"wrote {args.out_vcf}")
 
 if __name__ == "__main__":
     main()

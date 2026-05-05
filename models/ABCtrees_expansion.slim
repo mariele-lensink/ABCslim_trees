@@ -7,7 +7,7 @@
 //   END (default 40000)
 //   OUTTREES (default ".")
 //   SIMPLIFY_INTERVAL (default 200)
-//   NPOP (default computed from NE_REAL/Q; present-day size)
+//   NPOP (default computed from NE_REAL/Q; retained for back-compat)
 //   SELF (default 0.98)
 //   Q (default 50)
 //   NE_REAL (default 300000)
@@ -17,8 +17,9 @@
 //   INTERFILE (overrides GENOMEINFO_DIR)
 //
 // Demography -d parameters (optional):
-//   T_EXP (default 30000)        : expansion generation (forward time; jump to NPOP)
-//   EXP_MULT (default 3.0)       : NPOP = EXP_MULT * N_ANC  (so N_ANC = NPOP / EXP_MULT)
+//   N_ANC (default computed from NE_REAL/Q) : ancestral size before expansion
+//   T_EXP (default 30000)                  : expansion generation (forward time)
+//   N_EXP (default NPOP)                   : size after expansion
 //
 // Notes:
 // - gdfe/idfe are BIOLOGICAL means (negative). We scale by Q to preserve Ne*s.
@@ -39,7 +40,7 @@ initialize() {
     if (!exists("SIMPLIFY_INTERVAL")) defineConstant("SIMPLIFY_INTERVAL", 200);
     if (!exists("SELF")) defineConstant("SELF", 0.98);
 
-    // If NPOP not provided, compute from Ne_real / Q
+    // If NPOP not provided, compute from Ne_real / Q.
     // Back-compat: if older pipeline passes N_END, accept it as NPOP.
     if (!exists("NPOP")) {
         if (exists("N_END"))
@@ -59,13 +60,15 @@ initialize() {
     // ----------------------------
     // Demography defaults
     // ----------------------------
+    if (!exists("N_ANC")) defineConstant("N_ANC", NPOP);
     if (!exists("T_EXP")) defineConstant("T_EXP", asInteger(round(END * 0.75)));
-    if (!exists("EXP_MULT")) defineConstant("EXP_MULT", 3.0);
+    if (!exists("N_EXP")) defineConstant("N_EXP", NPOP);
 
     // Guards
+    if (N_ANC < 2) stop("N_ANC must be >= 2.");
     if (T_EXP < 1) stop("T_EXP must be >= 1.");
     if (T_EXP > END) stop("Require T_EXP <= END (expansion must occur before output).");
-    if (EXP_MULT < 1.0) stop("EXP_MULT must be >= 1.0.");
+    if (N_EXP < N_ANC) stop("Require N_EXP >= N_ANC for expansion model.");
 
     // ----------------------------
     // Read genomic intervals
@@ -104,7 +107,7 @@ initialize() {
         inter_stops  = c(inter_stops,  stop);
     }
 
-    defineConstant("L", max(gene_stops) + 1);
+    defineConstant("L", max(c(gene_stops, inter_stops)) + 1);
 
     // ----------------------------
     // Nucleotide-based model (must come before initializeTreeSeq)
@@ -123,8 +126,8 @@ initialize() {
     gdfe_sim = gdfe * Q;
     idfe_sim = idfe * Q;
 
-    initializeMutationTypeNuc("m2", 0.1, "g", gdfe_sim, 0.270);  // gene deleterious
-    initializeMutationTypeNuc("m3", 0.1, "g", idfe_sim, 0.270);  // intergene deleterious
+    initializeMutationTypeNuc("m2", 0.1, "g", gdfe_sim, 0.270);
+    initializeMutationTypeNuc("m3", 0.1, "g", idfe_sim, 0.270);
 
     // Clamp gd/id into [0,1] for safety
     gd_eff = max(0.0, min(1.0, gd));
@@ -143,15 +146,13 @@ initialize() {
     // Scale recombination rate for simulation
     initializeRecombinationRate(R_REAL * Q);
 
-    // Compute ancestral size from NPOP and EXP_MULT
-    ancN = asInteger(round(NPOP / EXP_MULT));
-    if (ancN < 2) ancN = 2;
-    defineConstant("N_ANC", ancN);
+    // ----------------------------
+    // Load an existing tree sequence if provided
+    // ----------------------------
+    if (!exists("INITTREES"))
+        defineConstant("INITTREES", "");
 }
 
-// ----------------------------
-// Truncation guardrail: prevent impossible s < -1
-// ----------------------------
 mutation(m2) {
     if (mut.selectionCoeff < -1.0)
         mut.setSelectionCoeff(-1.0);
@@ -164,31 +165,37 @@ mutation(m3) {
     return T;
 }
 
-// Start in ancestral size (smaller), expand to NPOP at T_EXP
 1 late() {
-    sim.addSubpop("p1", N_ANC);
-    p1.setSelfingRate(SELF);
+    if (INITTREES != "") {
+        sim.readFromPopulationFile(INITTREES);
+        p1.setSelfingRate(SELF);
+        if (p1.individualCount != N_ANC)
+            catn("Warning: loaded tree has " + p1.individualCount + " individuals, but YAML ancestral size N_ANC=" + N_ANC);
+    } else {
+        sim.addSubpop("p1", N_ANC);
+        p1.setSelfingRate(SELF);
+    }
+    sim.setValue("start_tick", community.tick);
 }
 
-// Main loop + simplify + expansion + output at END
 1:200000 late() {
 
     gen = community.tick;
+    elapsed = gen - sim.getValue("start_tick") + 1;
 
-    // Expansion event
-    if (gen == T_EXP) {
-        p1.setSubpopulationSize(NPOP);
-    }
+    if (elapsed % 5000 == 0)
+        catn("Heartbeat: continuation generation " + elapsed + " (absolute tick " + gen + ") for ID " + ID);
 
-    // Periodic tree-seq simplification
+    if (elapsed == T_EXP)
+        p1.setSubpopulationSize(N_EXP);
+
     if (SIMPLIFY_INTERVAL > 0) {
         if (gen % SIMPLIFY_INTERVAL == 0)
             sim.treeSeqSimplify();
     }
 
-    // Stop and output at END
-    if (gen == END) {
-        catn("Simulation reached generation " + END + " for ID " + ID);
+    if (elapsed == END) {
+        catn("Simulation reached continuation generation " + END + " for ID " + ID);
 
         sim.treeSeqSimplify();
         sim.treeSeqOutput(paste(OUTTREES, "/", ID, ".trees", sep=""));

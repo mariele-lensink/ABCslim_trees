@@ -1,0 +1,24 @@
+name: slim_pipeline
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - scikit-allel
+  - tskit
+  - msprime
+  - slim
+  - pyslim
+  - cyvcf2
+  - demes
+  - pyyaml
+  - matplotlib
+  - tqdm
+  - vcftools
+  - parallel
+  - r-base
+  - r-data.table

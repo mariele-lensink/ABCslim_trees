@@ -1,0 +1,9 @@
+description: Expansion model for ABCslim_trees with a recent 6k -> 18k size change.
+time_units: generations
+generation_time: 1
+demes:
+  - name: pop
+    epochs:
+      - start_size: 6000
+      - start_time: 2000
+        start_size: 18000

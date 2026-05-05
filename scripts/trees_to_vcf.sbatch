@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=3
 #SBATCH --mem=8G
-#SBATCH --time=2-00:00:00
+#SBATCH --time=7:00:00
 #SBATCH --partition=bmh
 #SBATCH --account=gmonroegrp
 #SBATCH --array=0-49999
@@ -19,22 +19,25 @@ conda activate abc_trees_vcf
 : "${PARAM_FILE:=/home/mlensink/slimsimulations/ABCslim_trees/priors/priors_2.6.25.csv}"
 : "${OFFSET:=0}"   # set to 0 for first half, 50000 for second half, etc.
 
-: "${TREES_DIR:=/home/mlensink/slimsimulations/ABCslim_trees/output/constant/trees}"
-: "${VCF_DIR:=/home/mlensink/slimsimulations/ABCslim_trees/output/constant/vcf}"
-: "${DERIVED_DIR:=/home/mlensink/slimsimulations/ABCslim_trees/output/constant/trees_derived}"
+: "${BASE_OUT:=/home/mlensink/slimsimulations/ABCslim_trees/output}"
+: "${CHROM_DIR:=chrom1}"
+: "${TREES_DIR:=${BASE_OUT}/constant/${CHROM_DIR}/trees}"
+: "${VCF_DIR:=${BASE_OUT}/constant/${CHROM_DIR}/vcf}"
+: "${DERIVED_DIR:=${BASE_OUT}/constant/${CHROM_DIR}/trees_derived}"
 
 mkdir -p "$DERIVED_DIR"
 
 # These must point to the interval CSVs your script expects (2-col start,stop; no header)
-: "${GENE_CSV:=/home/mlensink/slimsimulations/ABCslim_trees/genomeinfo/gene100.csv}"
-: "${INTERGENE_CSV:=/home/mlensink/slimsimulations/ABCslim_trees/genomeinfo/intergene100.csv}"
-: "${L:=377209}"  # <-- set this to your simulated chromosome/region length
+: "${GENE_CSV:=/home/mlensink/slimsimulations/ABCslim_trees/genomeinfo/gene100_chr5_1.csv}"
+: "${INTERGENE_CSV:=/home/mlensink/slimsimulations/ABCslim_trees/genomeinfo/intergene100_chr5_1.csv}"
+: "${L:=284122}"
 
 # Recapitation parameters (used only if RECAP=1)
 : "${RECAP:=1}"
 : "${NE_RECAP:=6000}"
 : "${RECOMB_RECAP:=2e-6}"
 : "${Q:=50}"
+: "${WRITE_VCF:=1}"
 
 LOGDIR=/home/mlensink/slimsimulations/ABCslim_trees/logs/const_trees_to_vcf
 mkdir -p "$LOGDIR" "$VCF_DIR"
@@ -57,7 +60,9 @@ DERIVED_OUT="${DERIVED_DIR}/${ID}.trees"
 echo "JOB=$SLURM_JOB_ID TASK=$SLURM_ARRAY_TASK_ID LINE=$LINE ID=$ID"
 echo "IN=$TREES_IN"
 echo "OUT=$VCF_OUT"
+echo "DERIVED_OUT=$DERIVED_OUT"
 echo "Q=$Q RECAP=$RECAP Ne_recap=$NE_RECAP recomb_recap=$RECOMB_RECAP"
+echo "WRITE_VCF=$WRITE_VCF"
 
 
 REC_ARGS=()
@@ -65,14 +70,19 @@ if [[ "$RECAP" == "1" ]]; then
   REC_ARGS=(--recapitate --Ne "$NE_RECAP" --recomb "$RECOMB_RECAP")
 fi
 
+VCF_ARGS=()
+if [[ "$WRITE_VCF" == "1" ]]; then
+  VCF_ARGS=(--out_vcf "$VCF_OUT")
+fi
+
 python /home/mlensink/slimsimulations/ABCslim_trees/scripts/trees_to_vcf.py \
   --trees "$TREES_IN" \
-  --out_vcf "$VCF_OUT" \
   --out_trees "$DERIVED_OUT" \
   --gene_csv "$GENE_CSV" \
   --intergene_csv "$INTERGENE_CSV" \
-  --L "$L" \
   --Q "$Q" \
+  --L "$L" \
   --gmu "$gmu" --imu "$imu" --gd "$gd" --id "$id" \
   --seed "$ID" \
+  "${VCF_ARGS[@]}" \
   "${REC_ARGS[@]}"

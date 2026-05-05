@@ -15,9 +15,9 @@ slim \
 python3 trees_to_vcf.py \
   --trees trees/bottleneck/TESTBOT.trees \
   --out_vcf trees/bottleneck/TESTBOT.vcf \
-  --gene_csv genomeinfo/gene100.csv \
-  --intergene_csv genomeinfo/intergene100.csv \
-  --L 1000000 --gmu 1e-8 --imu 1e-8 --gd 0.3 --id 0.3
+  --gene_csv genomeinfo/gene100_chr5_1.csv \
+  --intergene_csv genomeinfo/intergene100_chr5_1.csv \
+  --gmu 1e-8 --imu 1e-8 --gd 0.3 --id 0.3
 
 #expansion
 slim \
@@ -34,9 +34,9 @@ slim \
 python3 trees_to_vcf.py \
   --trees trees/expansion/TESTEXP.trees \
   --out_vcf trees/expansion/TESTEXP.vcf \
-  --gene_csv genomeinfo/gene100.csv \
-  --intergene_csv genomeinfo/intergene100.csv \
-  --L 1000000 --gmu 1e-8 --imu 1e-8 --gd 0.3 --id 0.3
+  --gene_csv genomeinfo/gene100_chr5_1.csv \
+  --intergene_csv genomeinfo/intergene100_chr5_1.csv \
+  --gmu 1e-8 --imu 1e-8 --gd 0.3 --id 0.3
 
 #constant size
 slim \
@@ -52,6 +52,6 @@ slim \
 python3 trees_to_vcf.py \
   --trees trees/constant/TEST001.trees \
   --out_vcf trees/constant/TEST001.vcf \
-  --gene_csv genomeinfo/gene100.csv \
-  --intergene_csv genomeinfo/intergene100.csv \
-  --L 1000000 --gmu 1e-8 --imu 1e-8 --gd 0.3 --id 0.3
+  --gene_csv genomeinfo/gene100_chr5_1.csv \
+  --intergene_csv genomeinfo/intergene100_chr5_1.csv \
+  --gmu 1e-8 --imu 1e-8 --gd 0.3 --id 0.3

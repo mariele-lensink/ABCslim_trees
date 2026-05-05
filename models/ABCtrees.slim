@@ -78,7 +78,7 @@ initialize() {
         inter_stops  = c(inter_stops,  stop);
     }
 
-    defineConstant("L", max(gene_stops) + 1);
+    defineConstant("L", max(c(gene_stops, inter_stops)) + 1);
 
     // ----------------------------
     // Nucleotide-based model (must come before initializeTreeSeq)
@@ -153,6 +153,9 @@ mutation(m3) {
 1:200000 late() {
 
     gen = community.tick;
+
+    if (gen % 5000 == 0)
+        catn("Heartbeat: generation " + gen + " for ID " + ID);
 
     // Periodic tree-seq simplification
     if (SIMPLIFY_INTERVAL > 0) {
