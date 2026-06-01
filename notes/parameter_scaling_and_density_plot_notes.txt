@@ -1,0 +1,298 @@
+Summary Statistic Calculations - Detailed Methods
+
+==========================================
+
+SNPs (Segregating Sites)
+------------------------
+Definition: A SNP is counted at any genomic position where there is genetic variation 
+present in the sample - meaning at least one individual carries a different allele from 
+the reference sequence, but the variant is not fixed (not all individuals have the same 
+alternative allele).
+
+Step-by-step calculation process:
+
+1. Load VCF or tree sequence file
+2. For each position in the genomic region of interest:
+   - Check if it's a biallelic SNP (reference and alternate are single DNA bases)
+   - Count how many individuals carry the alternate allele (alt_count)
+   - Count how many individuals have a valid genotype call (accession_count)
+3. Skip the position if:
+   - It's not biallelic
+   - alt_count == 0 (no one has the alternate allele - not polymorphic)
+   - alt_count == accession_count (everyone has the alternate allele - fixed)
+   - Genotyping is too sparse (if using VCF, fewer than 80% of samples genotyped)
+4. Increment the SNP counter
+
+Result: A raw count of polymorphic biallelic sites
+
+Important notes:
+- SNPs are NOT normalized per base pair
+- SNPs are NOT averaged across genes or regions
+- Each region (genic and intergenic) has its own SNP count
+- Longer regions naturally have higher SNP counts
+
+Code location: calc_sim_stats.py line 341, in process_vcf_file() and process_tree_file()
+
+
+Pi (π) - Nucleotide Diversity
+-----------------------------
+Definition: Pi is the average proportion of differences between pairs of sequences 
+in the sample. It estimates the genetic diversity per base pair.
+
+Mathematical formula:
+π = Σ(pairwise_differences_at_each_site) / total_region_length
+
+Step-by-step calculation:
+
+1. For each polymorphic SNP that passes filters:
+   - alt_count = number of individuals with the alternate allele
+   - accession_count = total number of individuals with valid genotypes at this site
+   
+2. Calculate pairwise_diff for this site:
+   pairwise_diff = (alt_count × (accession_count - alt_count)) / (accession_count × (accession_count - 1) / 2)
+   
+   This formula computes: (number of pairs differing) / (total possible pairs)
+   
+3. Sum all pairwise_diff values across all SNPs in the region:
+   pi_total = Σ(pairwise_diff)
+   
+4. Normalize by region length to get per-base-pair diversity:
+   pi = pi_total / total_region_length
+
+Result: A per-base-pair diversity measure
+
+Important notes:
+- Pi IS normalized per base pair, making regions of different lengths comparable
+- Pi uses allele frequencies (proportion of individuals with alternate allele)
+- Pi is sensitive to common and rare variants
+- If pi is very low, it means individuals in the sample are very genetically similar
+- If pi is high, there's lots of genetic variation
+
+Code location: calc_sim_stats.py line 354-357 (pairwise calculation), line 452 (normalization)
+
+
+Theta_w (θ_w) - Watterson's Theta
+----------------------------------
+Definition: Theta_w is a mutation-rate estimator based on counting the number of 
+segregating sites. It estimates population-scaled mutation rate.
+
+Mathematical formula:
+θ_w = S / (a₁ × L)
+
+Where:
+- S = number of segregating sites (SNPs) in the region
+- a₁ = Σ(1/i) for i from 1 to (n-1), where n is the number of individuals
+- L = total length of the region in base pairs
+
+Example: If n = 100 individuals:
+a₁ = 1/1 + 1/2 + 1/3 + ... + 1/99 = 4.98 (approximately)
+
+Step-by-step calculation:
+
+1. Count SNPs (S) - same as described above
+
+2. Calculate Tajima constants (a₁, a₂, e1, e2) based on sample size:
+   Code calls tajima_constants(n_accessions) which computes:
+   - a₁ = 1/1 + 1/2 + ... + 1/(n-1)
+   - a₂ = 1/1² + 1/2² + ... + 1/(n-1)²
+   - e₁ and e₂ are normalization constants for Tajima's D
+
+3. Calculate total theta: 
+   theta_total = S / a₁
+   
+4. Normalize by region length:
+   θ_w = theta_total / L
+
+Result: A per-base-pair mutation-rate estimate
+
+Important notes:
+- θ_w IS normalized per base pair
+- θ_w only counts SNPs, not allele frequencies
+- θ_w weights rare SNPs (singletons) equally to common SNPs
+- Different from π because it ignores the frequency information
+- If π > θ_w, suggests an excess of common variants
+- If π < θ_w, suggests an excess of rare variants
+
+Code location: calc_sim_stats.py line 454-455, tajima_constants() at line 138
+
+
+Tajima's D
+----------
+Definition: Tajima's D tests whether the observed site frequency spectrum (pattern 
+of variant frequencies) matches neutral evolution expectations. It's a standardized 
+difference between two diversity estimators.
+
+Mathematical formula:
+D = (π - θ_w) / √(e₁×S + e₂×S×(S-1))
+
+Where:
+- π = nucleotide diversity (calculated as above)
+- θ_w = Watterson's theta (calculated as above)
+- S = number of SNPs
+- e₁ and e₂ are constants that depend on sample size
+- The denominator is the expected standard deviation under neutrality
+
+Step-by-step calculation:
+
+1. Calculate unnormalized θ_total (before dividing by region length):
+   θ_total = S / a₁
+
+2. Calculate unnormalized π_total (before dividing by region length):
+   π_total = Σ(pairwise_diff) - same as in pi calculation but not divided by length
+
+3. Compute denominator using Tajima constants:
+   denom = √(e₁ × S + e₂ × S × (S - 1))
+
+4. Calculate D:
+   D = (π_total - θ_total) / denom
+
+Result: A dimensionless statistic
+
+Interpretation:
+- D ≈ 0: Consistent with neutral evolution
+- D > 0: Excess of common variants, suggests balancing selection or population expansion
+- D < 0: Excess of rare variants, suggests purifying selection or population bottlenecks
+
+Important notes:
+- D is NOT normalized per base pair - it's dimensionless
+- The region length cancels out in the ratio (π_total and θ_total both scale with length)
+- D can be compared across regions of different lengths
+- D depends on sample size (through a₁, a₂ constants)
+
+Code location: calc_sim_stats.py line 456-457
+
+
+Singletons
+-----------
+Definition: Singletons are SNPs where the derived (non-reference) allele appears 
+in exactly one individual in the sample.
+
+Step-by-step calculation:
+
+1. For each polymorphic SNP that passes filters:
+   - Calculate count_for_sfs = sfs_count(alt_count, accession_count)
+   - If fold_sfs is False (normal case):
+     count_for_sfs = alt_count
+   - If fold_sfs is True (folded SFS case):
+     count_for_sfs = min(alt_count, accession_count - alt_count)
+
+2. Check if count_for_sfs == 1:
+   if yes, increment singleton counter
+
+Result: A raw count of SNPs present in exactly 1 individual
+
+Important notes:
+- Singletons are NOT normalized per base pair
+- Singletons are NOT averaged across regions
+- Singletons represent very recent mutations (not much time for spread)
+- High singleton counts can indicate recent population growth or high mutation rates
+- Low singleton counts can indicate population bottlenecks or selection against rare variants
+
+Code location: calc_sim_stats.py line 346-349
+
+
+Doubletons
+-----------
+Definition: Doubletons are SNPs where the derived allele appears in exactly 
+two individuals in the sample.
+
+Step-by-step calculation:
+
+1. For each polymorphic SNP that passes filters:
+   - Calculate count_for_sfs = sfs_count(alt_count, accession_count) - same as above
+   
+2. Check if count_for_sfs == 2:
+   if yes, increment doubleton counter
+
+Result: A raw count of SNPs present in exactly 2 individuals
+
+Important notes:
+- Doubletons are NOT normalized per base pair
+- Doubletons are NOT averaged across regions
+- Doubletons help characterize the site frequency spectrum
+- Can indicate demographic events (population expansion gives more rare variants)
+- Part of the SFS (site frequency spectrum), which is sensitive to selection and demography
+
+Code location: calc_sim_stats.py line 350-351
+
+
+Key Differences Summary
+-----------------------
+Per-base-pair normalized: π, θ_w, D (implicitly through ratios)
+Raw counts: SNPs, singletons, doubletons
+
+Frequency-dependent: π (uses allele frequencies)
+Frequency-independent: θ_w, SNPs, singletons, doubletons (only count presence)
+
+Dimensionless: D (ratio of diversities)
+With units: π (diversity per bp), θ_w (diversity per bp), SNPs (count), singletons (count), doubletons (count)
+==========================================================
+
+This note summarizes how the six ABC parameters are interpreted, when they are
+scaled in SLiM, and how they are plotted in the prior/posterior density figures.
+
+Parameters in the prior CSV
+---------------------------
+The prior files store biological-scale parameter values:
+
+- gmu: genic mutation rate per site per generation
+- imu: intergenic mutation rate per site per generation
+- gd: proportion of genic mutations that are deleterious
+- id: proportion of intergenic mutations that are deleterious
+- gdfe: biological mean selection coefficient for genic deleterious mutations
+- idfe: biological mean selection coefficient for intergenic deleterious mutations
+
+The selection coefficients are negative because they are deleterious. The mutation
+rates and selection coefficients in the prior are not already SLiM-scaled.
+
+Scaling inside SLiM
+-------------------
+The main simulations use a scaling factor Q. In the current Q50 setup, Q = 50.
+SLiM computes NPOP = NE_REAL / Q, so with NE_REAL = 300000 the simulated population
+size is 6000.
+
+The model then scales parameters that need to preserve population-genetic quantities:
+
+- Selection coefficients are scaled by Q:
+  gdfe_sim = gdfe * Q
+  idfe_sim = idfe * Q
+
+  This is done to preserve Ne*s after reducing population size by Q.
+
+- Mutation rates are scaled by Q, but only the deleterious component is simulated
+  forward:
+  gmu_del_sim = (gmu * gd_eff) * Q
+  imu_del_sim = (imu * id_eff) * Q
+
+  gd_eff and id_eff are clamped into [0, 1] before this calculation. This preserves
+  theta while simulating the deleterious fraction of mutations in genic and
+  intergenic regions.
+
+- Recombination is also scaled by Q:
+  initializeRecombinationRate(R_REAL * Q)
+
+  This preserves rho after scaling population size.
+
+The proportions gd and id themselves are not scaled. They are fractions, so they are
+only bounded to the valid interval [0, 1].
+
+Important selection-coefficient guardrail
+-----------------------------------------
+Because gdfe and idfe are multiplied by Q before entering the SLiM mutation model,
+a biological value such as -0.03 becomes -1.5 when Q = 50. Values below -1 are not
+biologically meaningful in the usual 1 + s fitness interpretation.
+
+The uncapped_mean_Q50 ABC runs therefore filter the reference table to keep:
+
+- abs(gdfe) * 50 <= 1
+- abs(idfe) * 50 <= 1
+
+This keeps scaled mean deleterious effects within the interpretable range from
+0 down to -1. It does not change how the remaining parameters are plotted; it only
+changes which simulations are included in the prior/reference table.
+
+The plots use the biological parameter values from the reference table, not the
+SLiM-scaled values. The axis transforms are visual transforms only:
+
+
+

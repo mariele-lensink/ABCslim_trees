@@ -1,0 +1,47 @@
+Response to Jeff checklist
+==========================
+
+1. Aggregation vs per-gene interpretation
+   - Current pipeline aggregates all genic intervals and all intergenic intervals as single blocks.
+   - This means the stat file reports whole-region summaries, not per-gene averages.
+   - If the biological question is about genic vs intergenic dynamics across the whole target region, that is consistent.
+   - If the question is about typical gene behavior, the current pipeline is not answering that.
+
+2. Raw count length dependence
+   - g_snps, g_singletons, g_doubletons are raw totals across the entire genic set.
+   - These counts scale with total genic length and are not directly comparable across chromosomes.
+   - Use density ratios or per-bp normalization if cross-chromosome comparison is needed for counts.
+
+3. Per-bp stats and comparability
+   - g_pi and g_theta_w are computed as per-bp values on the full concatenated region.
+   - These are effectively length-weighted metrics and are the right comparators across chromosomes.
+   - They are not equivalent to simple unweighted averages across genes or intervals.
+
+4. Tajima's D interpretation
+   - g_td / i_td are computed on the aggregated region, not averaged per gene.
+   - Tajima's D is not additive, so per-gene TD averages would generally differ from aggregated TD.
+   - The current values reflect whole-region SFS shape, not gene-level heterogeneity.
+
+5. Missing-data risk in observed VCF
+   - The current VCF path counts only sites with enough called genotypes and divides by the full region length.
+   - This can depress observed pi and theta_w if many sites have missing data.
+   - That is a major risk for comparing observed 1001 Genomes stats with complete simulation data.
+
+6. DFE scaling clarity
+   - The scaling concept is correct: preserve Ne*s by scaling Ne down and s up by Q.
+   - The notes should explicitly state the SLiM implementation rule clearly:
+     * NE_SLIM = NE_real / Q
+     * s_SLIM = s_real × Q
+     * r_SLIM = r_real × Q
+     * μ_SLIM = μ_real × Q (when preserving θ)
+
+7. DFE generation structure
+   - The DFE is hierarchical: draw a biological-scale mean from the prior, then sample per-mutation effects from gamma(shape=0.2, scale = mean/0.2).
+   - That means only the mean varies across simulations, while the shape is fixed.
+   - This is acceptable if the model assumes a fixed Arabidopsis-shaped DFE, but it should be stated as a modeling choice.
+
+8. Overall takeaways
+   - The pipeline is internally consistent for whole-region genic/intergenic comparisons.
+   - The main danger is interpreting those aggregated stats as gene-level statistics.
+   - The biggest potential bias is the observed VCF missing-data handling for pi/theta.
+   - The scaling logic and wording should be checked carefully to avoid sign or multiplier confusion.

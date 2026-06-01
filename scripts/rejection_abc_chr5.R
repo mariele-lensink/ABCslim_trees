@@ -17,17 +17,38 @@ uncapped_mean_filter <- Sys.getenv("ABC_UNCAPPED_MEAN_FILTER", "0") == "1"
 filter_q <- as.numeric(Sys.getenv("ABC_FILTER_Q", "50"))
 filter_cap <- as.numeric(Sys.getenv("ABC_FILTER_CAP", "1"))
 filter_label <- if (uncapped_mean_filter) paste0("_uncapped_mean_Q", filter_q) else ""
+analysis_label <- Sys.getenv("ABC_ANALYSIS_LABEL", "")
+if (nzchar(analysis_label)) {
+  filter_label <- paste0(filter_label, "_", analysis_label)
+}
+stat_set <- Sys.getenv("ABCREJ_STAT_SET", "all_variable")
+valid_stat_sets <- c("base", "perbp_base", "all_variable")
+if (!stat_set %in% valid_stat_sets) {
+  stop("ABCREJ_STAT_SET must be one of: ", paste(valid_stat_sets, collapse = ", "))
+}
 
-target_stats_file <- file.path("output", "ABC_results", "observed", paste0("target_stats_", chrom_dir, ".csv"))
-sim_stats_file <- file.path("output", "simstats", paste0("sim_stats_", chrom_dir, ".csv"))
-sim_params_file <- "priors/priors_2.6.25.csv"
-out_dir <- file.path("output", "ABC_results", paste0("rejection_", chrom_label, filter_label))
-figure_dir <- "figures"
+target_stats_file <- Sys.getenv(
+  "ABC_TARGET_STATS_FILE",
+  file.path("output", "ABC_results", "observed", paste0("target_stats_", chrom_dir, ".csv"))
+)
+sim_stats_file <- Sys.getenv(
+  "ABC_SIM_STATS_FILE",
+  file.path("output", "simstats", paste0("sim_stats_", chrom_dir, ".csv"))
+)
+sim_params_file <- Sys.getenv("ABC_PRIORS_FILE", "priors/priors_2.6.25.csv")
+out_root <- Sys.getenv("ABC_OUTPUT_DIR", file.path("output", "ABC_results"))
+out_dir <- file.path(out_root, paste0("rejection_", chrom_label, filter_label))
+figure_dir <- Sys.getenv("ABC_FIGURE_DIR", "figures")
 
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
 
 cat("Rejection ABC chromosome:", chrom_dir, "\n")
+cat("Target stats file:", target_stats_file, "\n")
+cat("Simulation stats file:", sim_stats_file, "\n")
+cat("Priors file:", sim_params_file, "\n")
+cat("Analysis label:", ifelse(nzchar(analysis_label), analysis_label, "(none)"), "\n")
+cat("Rejection stat set:", stat_set, "\n")
 cat("Uncapped mean filter:", uncapped_mean_filter, "\n")
 if (uncapped_mean_filter) {
   cat("Keeping rows with abs(gdfe) *", filter_q, "<=", filter_cap,
@@ -74,14 +95,22 @@ if (uncapped_mean_filter) {
   par <- par[filter_keep]
 }
 
-# Use the expanded folded-SFS/downsampled stats, but exclude ratio-derived
-# summaries before distance calculation and drop constants/zero-variance
-# columns so Euclidean distance is not cluttered by fixed values.
+# Use either a minimal SNP-count/Tajima's D set, the statv2 per-bp SNP/Tajima's
+# D set, or the expanded folded-SFS/downsampled stats. For the expanded set,
+# exclude ratio-derived summaries before distance calculation.
+base_stats <- c("g_snps", "i_snps", "g_td", "i_td")
+perbp_base_stats <- c("g_snps_perbp", "i_snps_perbp", "g_td", "i_td")
 ratio_stats <- c("snp_ratio", "pi_ratio", "theta_ratio")
-sumstat_cols <- setdiff(
-  names(sim_stats),
-  c("ID", "g_sites_total", "i_sites_total", ratio_stats)
+sumstat_cols <- switch(
+  stat_set,
+  base = base_stats,
+  perbp_base = perbp_base_stats,
+  all_variable = setdiff(
+    names(sim_stats),
+    c("ID", "g_sites_total", "i_sites_total", ratio_stats)
+  )
 )
+sumstat_cols <- intersect(sumstat_cols, names(sim_stats))
 sumstat_cols <- sumstat_cols[
   vapply(sim_stats[, ..sumstat_cols], function(x) sd(x, na.rm = TRUE) > 0, logical(1))
 ]
@@ -366,6 +395,58 @@ ggsave(
   width = 7,
   height = 10
 )
+
+# Posterior summary-statistic histograms for accepted simulations.
+post_stats <- sim_stats[post[, .(ID)], on = "ID", nomatch = 0]
+if (nrow(post_stats) > 0) {
+  hist_stat_cols <- sumstat_cols
+  hist_stat_cols <- hist_stat_cols[
+    vapply(post_stats[, ..hist_stat_cols], is.numeric, logical(1)) &
+      hist_stat_cols %in% names(target_stats)
+  ]
+
+  long_stats <- melt(
+    post_stats[, c("ID", hist_stat_cols), with = FALSE],
+    id.vars = "ID",
+    variable.name = "statistic",
+    value.name = "value"
+  )
+  observed_stats <- melt(
+    target_stats[, ..hist_stat_cols],
+    measure.vars = hist_stat_cols,
+    variable.name = "statistic",
+    value.name = "observed"
+  )
+
+  p_summary_stats <- ggplot(long_stats, aes(x = value)) +
+    geom_histogram(bins = 40, fill = "grey70", color = "white", na.rm = TRUE) +
+    geom_vline(
+      data = observed_stats,
+      aes(xintercept = observed),
+      inherit.aes = FALSE,
+      color = "#b2182b",
+      linewidth = 0.7
+    ) +
+    facet_wrap(~ statistic, scales = "free", ncol = 4) +
+    scale_x_continuous(labels = label_number()) +
+    labs(
+      title = "Accepted rejection posterior summary statistics",
+      subtitle = "Red vertical line marks observed 1001 Genomes target value",
+      x = "Accepted simulation statistic value",
+      y = "Accepted simulations"
+    ) +
+    theme_bw(base_size = 12)
+
+  ggsave(
+    file.path(figure_dir, paste0("posterior_summary_stats_histograms_", chrom_label, filter_label, "_rejection_tol001.png")),
+    p_summary_stats,
+    width = 16,
+    height = 18,
+    dpi = 300
+  )
+} else {
+  warning("No accepted posterior IDs matched sim_stats; skipping summary-statistic histograms.")
+}
 
 cat("Rejection ABC complete.\n")
 cat("Rows in reference table:", nrow(par), "\n")

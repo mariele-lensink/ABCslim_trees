@@ -1,0 +1,147 @@
+---
+title: "Invariable Sites and 1001 VCF vs Perfect Simulation Data"
+output: html_document
+---
+
+# Invariable Sites in 1001 VCF vs Perfect Sims
+
+## Concern
+- The 1001 Genomes VCF contains many sites that are effectively invariable because of missing genotype calls or filtering.
+- Simulated data are complete by design: every site has genotype information for every sample.
+- This mismatch can bias summary statistics such as `pi`, `theta_w`.
+
+## What is an invariable site here?
+- an invariable site is a monomorphic position that is included in the analysis as a reference site.
+- An AllSites VCF contains both variant sites and invariant sites so the denominator of diversity statistics is correct.
+- In a typical variant-only VCF, the absence of a record at a position usually means the site is monomorphic or not called, but the site is not explicitly represented.
+- This matters because a variant-only VCF cannot distinguish between a callable invariant site and a site that was not called at all.
+
+## Why this matters for summary stats
+- `pi` and `theta_w` should be computed over all callable bases, including invariant positions.
+- PIXY avoids the common bias by treating missing data correctly: it does not assume all missing sites are invariant, nor does it assume they are absent from the denominator.
+- If the numerator only includes called variant sites but the denominator is the total region length, statistics are biased downward.
+- For correct comparison with simulations, the observed data need either an AllSites / invariant-sites-aware VCF or a callable-sites mask.
+- Raw counts like `g_snps` are also reduced by missingness, but they are not normalized.
+
+## Key differences between perfect sims and 1001 VCF
+- **Simulations**
+  - All sites are available
+  - No missing genotypes
+  - Every site is explicitly variant or invariant in the target interval
+- **1001 VCF**
+  - Usually only variant sites are recorded unless an AllSites VCF is generated
+  - Missing genotypes are common
+  - Sites with low call rate may be excluded entirely
+  - Invariable positions are only explicit if the VCF includes reference/non-variant records
+  - VCF-only representations cannot distinguish missing sites from true invariant sites
+
+
+## What to check next
+- Determine whether the observed VCF includes reference sites or only variants.
+- Confirm whether the current `calc_sim_stats.py` denominator is the total interval length or the number of callable sites.
+- Decide whether to switch to an explicit callability mask or a per-site callable denominator.
+- Consider using tools like PIXY or other genotype-aware estimators if missing data are substantial.
+
+## Potential fixes
+- compute `pi` and `theta_w` only over callable bases, not full interval length
+- add a separate "callable sites" count to the stats output
+- compare the observed target against a simulated target with matching missing-data structure, not against perfectly complete sims
+- use density-normalized metrics (`snps / sites_total`) rather than raw counts for cross-data comparison
+
+## Action items
+- check the 1001 VCF: variant-only or reference-aware?
+- inspect missing genotype rates per site and per sample
+- verify whether `calc_sim_stats.py` counts callable sites as part of `sites_total`
+- consider a missing-data-aware pipeline for the observed data
+
+## Action item answers
+
+### 1. Is the 1001 VCF variant-only or reference-aware?
+
+The current observed-data sbatch uses:
+
+`../../rawdata/arabidopsis/1001genomes_snp-short-indel_only_ACGTN.vcf.gz`
+
+This is a variant-only VCF, not a reference-aware / AllSites VCF.
+
+Evidence:
+
+- The filename explicitly says `snp-short-indel_only`.
+- The VCF header has `GT`, `GQ`, and `DP`, but no `END` or reference-block metadata.
+- `bcftools index -s` reports only variant records:
+  - chromosome 1: 3,131,891 records
+  - chromosome 2: 2,244,355 records
+  - chromosome 3: 2,650,671 records
+  - chromosome 4: 2,125,788 records
+  - chromosome 5: 2,731,149 records
+- In a bounded chromosome 5 region, `bcftools stats` reported `number of no-ALTs: 0`.
+
+So absent positions in this VCF cannot be interpreted as confirmed callable invariant sites.
+
+### 2. What are the missing genotype rates?
+
+For chromosome 5 target intervals, after restricting to biallelic SNP records in the genic/intergenic interval files:
+
+- Samples: 1,135
+- Target biallelic SNP records: 26,803
+
+Per-site call fraction:
+
+- Genic:
+  - records: 14,740
+  - polymorphic records: 14,738
+  - polymorphic records passing the current `MIN_VCF_CALL_FRACTION >= 0.8` filter: 14,038
+  - complete sites: 0
+  - mean call fraction: 0.9477
+  - median call fraction: 0.9744
+  - 5th percentile: 0.8089
+  - 95th percentile: 0.9912
+  - minimum: 0.0018
+- Intergenic:
+  - records: 12,063
+  - polymorphic records: 12,056
+  - polymorphic records passing the current `MIN_VCF_CALL_FRACTION >= 0.8` filter: 9,426
+  - complete sites: 0
+  - mean call fraction: 0.8359
+  - median call fraction: 0.9366
+  - 5th percentile: 0.2634
+  - 95th percentile: 0.9824
+  - minimum: 0.0009
+
+Per-sample missingness across those target biallelic SNP records:
+
+- mean: 0.1026
+- median: 0.0848
+- 5th percentile: 0.0460
+- 95th percentile: 0.2361
+- minimum: 0.0056
+- maximum: 0.4111
+- highest-missing samples: 9970 = 0.411, 10013 = 0.389, 9969 = 0.384, 9974 = 0.376, 9945 = 0.375
+- lowest-missing samples: 7208 = 0.006, 6119 = 0.022, 1166 = 0.028, 6180 = 0.030, 15560 = 0.030
+
+Interpretation: missingness is not trivial, especially in intergenic target intervals and in a subset of samples.
+
+### 3. Does `calc_sim_stats.py` count callable sites as part of `sites_total`?
+
+No. `sites_total` is not a callable-site count.
+
+In `scripts/calc_sim_stats.py`, `sites_total` is initialized from the lengths of the genic and intergenic interval CSVs:
+
+- `region_lengths()` sums `stop - start + 1`
+- `zero_region_stats(length)` stores that interval length as `sites_total`
+- `finalize_region_stats()` computes:
+  - `pi = pi_total / sites_total`
+  - `theta_w = (snps / a1) / sites_total`
+
+The VCF path filters records with missing genotype rates below `MIN_VCF_CALL_FRACTION`, but it does not add a per-base callable denominator. For the observed VCF this means the numerator is based on SNP records that pass missingness filters, while the denominator is the full interval length.
+
+### 4. Should the observed pipeline become missing-data-aware?
+
+Yes. For direct comparison with complete simulations, the observed pipeline should use one of these fixes:
+
+1. Best fix: add a callable-sites mask / AllSites-aware denominator for observed data, then divide `pi` and `theta_w` by callable bases rather than interval length.
+2. Practical short-term fix: output additional observed-data columns such as `g_callable_sites`, `i_callable_sites`, and call-fraction summaries, while keeping the current `g_sites_total` / `i_sites_total`.
+3. Simulation-matching fix: downsample or mask simulations to match observed missing-data structure before calculating summary statistics.
+4. Conservative interim interpretation: treat current observed `pi` and `theta_w` as potentially denominator-biased because the 1001 VCF is variant-only and has nontrivial missingness.
+
+Current bottom line: the current pipeline is internally consistent for complete simulations, but the observed 1001 target statistics are not denominator-equivalent to simulations.

@@ -1,0 +1,196 @@
+---
+title: "Summary Statistic and Parameter Calculations Overview"
+output: html_document
+---
+
+# Summary Statistic and Parameter Calculations Overview
+
+## SNPs
+- Raw count of polymorphic biallelic sites (0 < alt_count < accession_count)
+- Not per-bp, not averaged across genes
+- Each region (genic/intergenic) gets its own aggregated count
+- Sites with missing data filtered if < 80% genotyped
+
+### Code reference
+```python
+region_stats = stats[region]
+region_stats["snps"] += 1
+```
+
+### Filtering logic
+```python
+alt_count, accession_count = count_accessions(genotypes)
+if accession_count == 0 or alt_count == 0 or alt_count == accession_count:
+    continue
+```
+
+## Pi (π) - Nucleotide Diversity
+- Formula: π = Σ(pairwise_differences_at_each_site) / total_region_length
+- For each SNP: pairwise_diff = (alt_count × (accession_count - alt_count)) / total_pairs
+- Sum across all SNPs, divide by region length
+- **Per-bp metric** — directly comparable across different region sizes
+- Captures both allele frequency and variant presence
+
+### Code reference
+```python
+pairwise_diff = (alt_count * (accession_count - alt_count)) / (
+    accession_count * (accession_count - 1) / 2.0
+)
+region_stats["pi_total"] += pairwise_diff
+```
+
+### Final normalization
+```python
+length = int(stats["sites_total"])
+stats["pi"] = stats["pi_total"] / length if length > 0 else 0.0
+```
+
+## Theta_w (θ_w) - Watterson's Theta
+- Formula: θ_w = (S / a₁) / L
+- S = number of SNPs; a₁ = Σ(1/i) for i = 1..n-1; L = region length
+- **Per-bp metric** — normalized like π
+- Uses only SNP counts, ignores allele frequencies
+- Rare and common SNPs contribute equally to θ_w
+
+### Code reference
+```python
+theta_total = snps / tajima["a1"]
+stats["theta_w"] = theta_total / length
+```
+
+## Tajima's D
+- Formula: D = (π_total - θ_total) / √(e₁×S + e₂×S×(S-1))
+- Uses unnormalized π_total and θ_total; length drops out in the ratio
+- **Dimensionless** — comparable across any region size
+- D ≈ 0: neutral
+- D > 0: excess common variants
+- D < 0: excess rare variants
+
+### Code reference
+```python
+denom = math.sqrt(tajima["e1"] * snps + tajima["e2"] * snps * (snps - 1))
+stats["td"] = (stats["pi_total"] - theta_total) / denom if denom > 0 else 0.0
+```
+
+## Singletons
+- Raw count of SNPs where derived allele appears in exactly 1 individual
+- Not per-bp, not averaged
+- Reflects very recent variants
+
+### Code reference
+```python
+count_for_sfs = sfs_count(alt_count, accession_count)
+if count_for_sfs == 1:
+    region_stats["singletons"] += 1
+```
+
+## Doubletons
+- Raw count of SNPs where derived allele appears in exactly 2 individuals
+- Not per-bp, not averaged
+- Useful for the low-frequency part of the SFS
+
+### Code reference
+```python
+if count_for_sfs == 2:
+    region_stats["doubletons"] += 1
+```
+
+## Aggregation and final output
+- Final stats file has one row per input ID / VCF file / simulation
+- Genic values (`g_*`) are aggregated across all genic intervals combined
+- Intergenic values (`i_*`) are aggregated across all intergenic intervals combined
+- I chose aggregation because I thought weighting the average was the right thing to do, but I am confusing whole-region genic vs intergenic dynamics with per-gene averages
+- `g_sites_total` and `i_sites_total` are total base pairs in the interval sets
+- `g_snps` / `i_snps` are total SNP counts across the full region sets
+- `g_pi` / `i_pi` are per-bp diversity across the full region sets
+- `g_theta_w` / `i_theta_w` are per-bp Watterson theta across the full region sets
+- `g_td` / `i_td` are Tajima's D for the full aggregated genic/intergenic regions
+- `g_singletons` / `i_singletons` and `g_doubletons` / `i_doubletons` are total counts in the full genic/intergenic sets
+
+### Code reference
+```python
+def init_region_stats(lengths: Dict[str, int]) -> Dict[str, Dict[str, float]]:
+    stats = {region: zero_region_stats(lengths[region]) for region in REGION_PREFIX}
+    for region in stats:
+        for label, _, _ in SFS_BINS:
+            stats[region][f"sfs_{label}"] = 0
+    return stats
+```
+
+```python
+def result_row(file_id: int, stats: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+    row: Dict[str, float] = {"ID": file_id}
+    for region, prefix in REGION_PREFIX.items():
+        region_stats = stats[region]
+        row[f"{prefix}_sites_total"] = int(region_stats["sites_total"])
+        row[f"{prefix}_snps"] = int(region_stats["snps"])
+        row[f"{prefix}_singletons"] = int(region_stats["singletons"])
+        row[f"{prefix}_doubletons"] = int(region_stats["doubletons"])
+        row[f"{prefix}_pi"] = region_stats["pi"]
+        row[f"{prefix}_theta_w"] = region_stats["theta_w"]
+        row[f"{prefix}_td"] = region_stats["td"]
+        for label, _, _ in SFS_BINS:
+            row[f"{prefix}_sfs_{label}_prop"] = region_stats[f"sfs_{label}_prop"]
+    return row
+```
+
+## Thinking about effects of aggregate totals versus normalized by gene/intergenic
+- I treat all genic intervals as one concatenated genic block, and all intergenic intervals as one concatenated intergenic block.
+- That does not make SNP counts robust to gene length; longer genic regions will still produce more raw SNPs.
+- `g_pi` and `g_theta_w` are per-bp across the full concatenated region, so they are comparable across chromosomes.
+- Raw totals like `g_snps`, `g_singletons`, `g_doubletons` still reflect the total region size and need a length denominator for cross-chromosome comparison.
+- If I averaged stats per gene, I would shift the signal from “total regional diversity” to “average gene behavior.”
+- Per-gene averaging would reduce the influence of very long genes and make the metric more robust to gene-length distribution, but it would also give small genes equal weight with large genes.
+- For intergenic regions the same logic applies: average per interval would emphasize interval-level variation instead of total intergenic load.
+- For cross-chromosome comparison, I should keep per-bp metrics and density ratios rather than raw totals.
+- The core contrast I want is genic vs intergenic dynamics, not chromosome size differences.
+
+## Scaling Rules - Preserving Ne×S
+
+I scale parameters by Q (currently Q=50, tested Q=25 for chr5) to speed up SLiM while preserving population genetics.
+
+**Why Ne×S matters**: Selection strength relative to drift determines evolutionary outcome. If I reduce Ne by factor Q, I must increase s by factor Q to keep selection equally strong.
+
+**Implementation:**
+- `NE_SLIM = NE_biological / Q`
+- `s_SLIM = s_biological × Q`
+- `μ_SLIM = μ_biological × Q`
+- `r_SLIM = r_biological × Q`
+
+**Math check:**
+
+```math
+NE_biological × s_biological = (NE_SLIM × Q) × (s_SLIM / Q) = NE_SLIM × s_SLIM
+```
+
+Same logic applies to mutation rate (θ) and recombination rate (ρ).
+
+**Why this matters:** Scaled simulation has identical population-genetic behavior to biological reality, just faster.
+
+**Implementation detail:** ABC runs on biological-scale parameters (unscaled). I unscale them from SLiM before inference.
+
+**Selection coefficient guardrail:** If `abs(s_SLIM) > 1`, the fitness model becomes unreasonable. I filter simulations where `abs(gdfe) × Q > 1` and `abs(idfe) × Q > 1`.
+
+## Distribution of Fitness Effects (DFE) Generation
+
+I generate DFE per simulation through a hierarchical process:
+
+### Step 1: Biological-scale uniform prior
+- Draw mean selection coefficient (`μ_s`) from a log-uniform distribution
+- Range: `10^-5` to `10^-2`
+- Independent draw for genic and intergenic regions
+
+### Step 2: Gamma distribution drawing
+- For each simulation, mutations are drawn from `gamma(shape=0.2, scale=μ_s/0.2)`
+- Shape parameter `0.2` is fixed from stdpopsim Arabidopsis
+- Scale is set so mean = `μ_s`
+
+### Step 3: Scale for SLiM
+- Multiply gamma-drawn selection coefficients by `Q` before passing them to SLiM
+- This preserves `Ne×s` because the simulated population is reduced to `NE_REAL / Q`
+
+### Why this matters
+- Shape = `0.2` makes most mutations weak and a few stronger
+- Each simulation gets a different `μ_s` but same shape
+- This lets ABC infer mean DFE variation while keeping a realistic Arabidopsis-shaped DFE
+

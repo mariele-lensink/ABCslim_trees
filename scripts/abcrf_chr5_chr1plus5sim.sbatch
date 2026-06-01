@@ -9,7 +9,7 @@
 #SBATCH --account=gmonroegrp
 
 set -euo pipefail
-source ~/miniconda3/etc/profile.d/conda.sh
+source /group/gmonroegrp2/mlensink/miniconda3/etc/profile.d/conda.sh
 conda activate abc_trees
 
 # Run the ABCRF script

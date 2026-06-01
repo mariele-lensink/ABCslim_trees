@@ -11,7 +11,7 @@
 //   INITIAL_SIZE (default NPOP)
 //   EVENT_TIMES (default c())  // forward generations at which size changes occur
 //   EVENT_SIZES (default c())  // target sizes paired with EVENT_TIMES
-//   END (default 40000)
+//   END (default 10*NPOP)
 //   OUTTREES (default ".")
 //   SIMPLIFY_INTERVAL (default 200)
 //   NPOP (default computed from NE_REAL/Q; only used if INITTREES is empty)
@@ -28,11 +28,11 @@ initialize() {
     if (!exists("NE_REAL")) defineConstant("NE_REAL", 300000.0);
     if (!exists("R_REAL")) defineConstant("R_REAL", 4e-8);
 
-    if (!exists("END")) defineConstant("END", 40000);
     if (!exists("OUTTREES")) defineConstant("OUTTREES", ".");
     if (!exists("SIMPLIFY_INTERVAL")) defineConstant("SIMPLIFY_INTERVAL", 200);
     if (!exists("SELF")) defineConstant("SELF", 0.98);
     if (!exists("NPOP")) defineConstant("NPOP", asInteger(round(NE_REAL / Q)));
+    if (!exists("END")) defineConstant("END", asInteger(10 * NPOP));
     if (!exists("INITTREES")) defineConstant("INITTREES", "");
     if (!exists("INITIAL_SIZE")) defineConstant("INITIAL_SIZE", NPOP);
     if (!exists("EVENT_TIMES")) defineConstant("EVENT_TIMES", c());
@@ -131,7 +131,7 @@ mutation(m3) {
     sim.setValue("start_tick", community.tick);
 }
 
-1:200000 late() {
+1:END late() {
     gen = community.tick;
     elapsed = gen - sim.getValue("start_tick") + 1;
 

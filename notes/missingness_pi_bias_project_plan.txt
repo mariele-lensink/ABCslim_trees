@@ -1,0 +1,290 @@
+Project plan: quantify missingness and pi bias in the new VCF subsets
+
+Context
+-------
+The current VCF subsets report variant sites, but invariant sites are not
+reported. We already know that if pi is calculated from reported variants and
+then divided by the full sequence length, the estimate should trend downward:
+the numerator only includes observed differences at reported variant sites,
+while the denominator includes bases that may not have actually been callable.
+
+This is also a highly selfing species, so heterozygosity is not a useful
+diagnostic target. The missingness/bias work should instead focus on callable
+sequence length, allele sampling among mostly homozygous lines, and how missing
+genotypes change pairwise differences and the site-frequency spectrum.
+
+
+Main questions
+--------------
+1. How much missingness is present in each VCF subset at reported variant sites?
+
+2. How much of the full sequence denominator was actually callable?
+
+3. How sensitive is pi to filtering sites or individuals by missingness?
+
+4. Does missingness preferentially affect rare variants, particular individuals,
+   or particular genomic windows?
+
+5. Given the observed missingness pattern, how biased is pi likely to be relative
+   to an estimate over callable sequence?
+
+
+Separate sources of bias
+------------------------
+1. Denominator bias from missing invariant/callable sites
+
+   If invariant sites are not reported, then dividing by full sequence length
+   treats all unreported sites as callable zero-difference sites. This pushes pi
+   downward whenever the true callable length is less than the full length.
+
+   Approximate relationship:
+
+     pi_full_length = pairwise_differences / full_sequence_length
+     pi_callable    = pairwise_differences / callable_length
+
+     pi_full_length / pi_callable = callable_length / full_sequence_length
+
+   So if only 70 percent of a region is callable, pi calculated with the full
+   denominator is expected to be about 70 percent of the callable-site estimate.
+
+2. Allele-sampling bias at reported variant sites
+
+   Missing genotypes change which individuals contribute to allele counts and
+   pairwise comparisons. In a selfer, this mostly means missing homozygous
+   reference or homozygous alternate calls, not missing heterozygotes.
+
+   If missingness is random with respect to genotype, the expectation of pi may
+   be less biased but the variance increases. If missingness is structured by
+   individual, genomic region, depth, or allele frequency, pi can be biased.
+
+3. Rare-allele sensitivity
+
+   Selfing populations may have many low-frequency variants among lines. Missing
+   one or two individuals can disproportionately remove rare alleles or alter
+   singleton/doubleton counts, which can lower the variant contribution to pi.
+
+
+Missingness summaries to calculate
+----------------------------------
+For each VCF subset:
+
+  subset_name
+  chromosome_or_region
+  n_individuals
+  full_sequence_length
+  n_reported_variant_sites
+  n_sites_with_any_missing_genotype
+  mean_called_individuals_per_site
+  median_called_individuals_per_site
+  fraction_sites_called_in_all_individuals
+  fraction_sites_called_in_at_least_90_percent_individuals
+  mean_missing_rate_per_site
+  median_missing_rate_per_site
+  mean_missing_rate_per_individual
+  max_missing_rate_per_individual
+
+Per individual:
+
+  subset_name
+  individual_id
+  n_missing_genotypes
+  n_called_genotypes
+  missing_rate
+
+Per site:
+
+  subset_name
+  chrom
+  position
+  n_called_individuals
+  n_missing_individuals
+  missing_rate
+  ref_allele_count
+  alt_allele_count
+  minor_allele_count
+  allele_frequency_among_called
+
+Per genomic window:
+
+  subset_name
+  chrom
+  window_start
+  window_end
+  window_length
+  n_reported_variant_sites
+  mean_site_missing_rate
+  mean_called_individuals_per_site
+  pi_full_denominator
+  pi_callable_denominator_if_available
+
+
+Diagnostics to avoid
+--------------------
+Do not center this analysis on heterozygosity. Because this is a selfing
+species, heterozygosity is not expected to be a strong or stable proxy for
+missingness-related bias.
+
+
+Better diagnostics
+------------------
+Use these instead:
+
+  missingness vs minor allele count
+  missingness vs allele frequency among called individuals
+  missingness vs number of called individuals
+  missingness vs singleton/doubleton status
+  missingness by individual
+  missingness by genomic window
+  missingness by subset or chromosome
+  window-level missingness vs window-level pi
+
+If depth or genotype quality fields are available, also check:
+
+  missingness vs mean depth
+  missingness vs minimum depth
+  missingness vs genotype quality
+
+
+Pi sensitivity analysis
+-----------------------
+For every VCF subset, calculate pi repeatedly under a series of site-missingness
+thresholds:
+
+  no site-missingness filter
+  max 50 percent missing
+  max 25 percent missing
+  max 10 percent missing
+  complete sites only
+
+For each threshold, record:
+
+  n_sites_retained
+  n_sites_removed
+  n_variant_sites_retained
+  fraction_variant_sites_retained
+  mean_called_individuals_per_site
+  singleton_count
+  doubleton_count
+  low_frequency_variant_count
+  intermediate_frequency_variant_count
+  pairwise_difference_numerator
+  denominator_used
+  pi
+
+The important comparison is whether pi changes monotonically or substantially as
+the filter gets stricter, and whether the site-frequency spectrum shifts as
+missing sites are removed.
+
+
+Callable denominator estimation
+-------------------------------
+Best to weakest evidence for callable length:
+
+1. Callable mask or depth mask from BAM/coverage processing.
+
+2. gVCF or all-sites VCF that explicitly represents invariant callable sites.
+
+3. Per-window coverage/depth summaries, if available.
+
+4. Inference from reported-site missingness and depth patterns in each window.
+
+5. Sensitivity analysis over assumed callable fractions, for example:
+
+     callable_fraction = 1.00, 0.95, 0.90, 0.80, 0.70, 0.50
+
+   Then compute:
+
+     callable_length = full_sequence_length * callable_fraction
+     pi_corrected    = pairwise_differences / callable_length
+
+The final write-up should distinguish clearly between pi using the full
+sequence denominator and pi using any callable-site denominator estimate.
+
+
+Masking simulation for allele-sampling bias
+-------------------------------------------
+Use high-call or complete reported variant sites as a reference set. Then
+artificially mask genotypes to mimic observed missingness patterns and
+recalculate pi.
+
+Masking schemes:
+
+1. Random genotype masking at the same overall missing rate.
+
+2. Per-individual masking, preserving each individual's observed missing rate.
+
+3. Per-site masking, preserving the observed distribution of called sample size.
+
+4. Per-window masking, preserving regional missingness patterns.
+
+5. Depth-associated masking, if depth information is available.
+
+For each scheme:
+
+  pi_unmasked_reference
+  pi_masked
+  absolute_bias = pi_masked - pi_unmasked_reference
+  relative_bias = absolute_bias / pi_unmasked_reference
+
+This estimates the variant-site allele-sampling component of bias. It does not
+solve the missing invariant-site denominator problem, so these two pieces should
+be reported separately.
+
+
+Expected outputs
+----------------
+1. Table: missingness summary per subset.
+
+2. Table: per-individual missingness per subset.
+
+3. Table: per-window missingness and pi per subset.
+
+4. Table: pi under missingness thresholds.
+
+5. Table: allele-frequency spectrum under missingness thresholds.
+
+6. Table: masking simulation bias estimates.
+
+7. Plots:
+
+     histogram of per-site missingness
+     histogram of per-individual missingness
+     missingness across genomic windows
+     missingness vs minor allele count
+     missingness vs allele frequency
+     pi vs missingness threshold
+     singleton/doubleton counts vs missingness threshold
+
+
+Interpretation framework
+------------------------
+For each subset, classify the likely issue:
+
+  likely denominator-driven downward bias
+  likely allele-sampling bias at reported variant sites
+  mostly increased uncertainty, weak evidence for directional bias
+  unstable estimate due to strong individual or window-level missingness
+
+Final statement to aim for:
+
+  Given the observed missingness pattern, pi calculated with the full sequence
+  denominator is expected to be biased downward by approximately the missing
+  callable fraction. Additional bias from reported-site genotype missingness is
+  estimated by comparing pi before and after observed-pattern masking.
+
+
+Immediate next steps
+--------------------
+1. Identify the new VCF subset paths and sample lists.
+
+2. Decide whether any all-sites VCF, gVCF, callable mask, or coverage/depth file
+   exists for the same samples and regions.
+
+3. Write a script to summarize reported-site missingness per subset.
+
+4. Add pi-by-missingness-threshold calculations.
+
+5. Add masking simulations using high-call reported variant sites.
+
+6. Revisit denominator correction once callable-site information is known or a
+   sensitivity range is chosen.

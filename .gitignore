@@ -10,6 +10,8 @@ output/**
 *.vcf
 *.vcf.gz
 *.tbi
+*.png
+*.svg
 
 # --- OS/editor junk ---
 .DS_Store

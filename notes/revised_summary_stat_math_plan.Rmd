@@ -1,0 +1,312 @@
+---
+title: "Revised Summary Statistic Calculation Plan"
+date: "2026-05-13"
+output: html_document
+---
+
+# Purpose
+
+This document is the math and design plan for a new summary-statistic calculation
+script. The current script, `scripts/calc_sim_stats.py`, should be preserved as the
+baseline pipeline. The new script should be closely based on the old one, but with
+explicit handling of all-sites VCF records, missing genotype calls, callable-site
+denominators, and observed-vs-simulated consistency.
+
+No code changes are specified here yet. This is the planning layer before writing
+a new script.
+
+# Current Baseline
+
+The current pipeline calculates statistics separately for genic and intergenic
+regions. Each region is treated as one concatenated block:
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+For a region \(R\), let:
+
+- \(L_R\) be the total length of all intervals in the region.
+- \(S_R\) be the number of segregating sites retained after filters.
+- \(n\) be the number of sampled diploid accessions.
+- \(x_j\) be the number of accessions carrying the alternate allele at site \(j\).
+
+The current simulation path effectively assumes all bases are callable:
+
+\[
+L_R = \sum_{k \in R} (\text{end}_k - \text{start}_k + 1)
+\]
+
+The current VCF path also uses interval length for `sites_total`, even when the
+observed VCF has missing genotype calls. This is the main denominator issue to fix.
+
+# Existing Statistics
+
+## SNP Count
+
+Current definition:
+
+\[
+S_R = \sum_{j \in R} I(0 < x_j < n_j)
+\]
+
+where \(n_j\) is the number of called accessions at site \(j\). In the current
+script, sites with too much missingness can be filtered by call fraction.
+
+Important design choice for the new script:
+
+- Keep a raw segregating-site count, \(S_R\).
+- Add a density version:
+
+\[
+\text{SNP density}_R = \frac{S_R}{C_R}
+\]
+
+where \(C_R\) is the callable denominator for the region.
+
+## Nucleotide Diversity, \(\pi\)
+
+For each segregating biallelic site \(j\):
+
+\[
+\pi_j =
+\frac{x_j(n_j - x_j)}{\binom{n_j}{2}}
+\]
+
+The current script sums this over SNPs and divides by interval length:
+
+\[
+\pi_R =
+\frac{\sum_{j \in R} \pi_j}{L_R}
+\]
+
+For complete simulations, \(L_R\) is appropriate. For observed VCF data with
+missing genotype calls, the revised version should consider:
+
+\[
+\pi_R =
+\frac{\sum_{j \in R} \pi_j}{C_R}
+\]
+
+where \(C_R\) is the number of callable bases in the region, or a missing-data-aware
+effective denominator.
+
+## Watterson's \(\theta_W\)
+
+For complete data with sample size \(n\):
+
+\[
+a_1(n) = \sum_{i=1}^{n-1} \frac{1}{i}
+\]
+
+\[
+\theta_{W,R} =
+\frac{S_R/a_1(n)}{L_R}
+\]
+
+For observed data with variable called sample size \(n_j\), there are two possible
+approaches.
+
+Simple callable-denominator approach:
+
+\[
+\theta_{W,R} =
+\frac{S_R/a_1(n_{\text{target}})}{C_R}
+\]
+
+where \(n_{\text{target}}\) is the intended sample size after filtering or
+subsampling.
+
+More missingness-aware approach:
+
+\[
+\theta_{W,R} =
+\frac{\sum_{j \in R} I(0 < x_j < n_j)/a_1(n_j)}{C_R}
+\]
+
+The second approach lets each site use its own called sample size. This is more
+appropriate when missingness differs substantially across sites.
+
+## Tajima's D
+
+Current complete-data form:
+
+\[
+D_R =
+\frac{\pi_{\text{total},R} - S_R/a_1(n)}
+{\sqrt{e_1(n)S_R + e_2(n)S_R(S_R - 1)}}
+\]
+
+where:
+
+\[
+\pi_{\text{total},R} = \sum_{j \in R} \pi_j
+\]
+
+For complete simulations this is reasonable. For observed data with variable
+missingness, a direct Tajima's D is trickier because \(n_j\) can vary by site.
+Planning options:
+
+1. Keep the current complete-data formula for simulations only.
+2. For observed VCFs, require a fixed complete sample set after filtering.
+3. Use a site-specific correction or defer Tajima's D until the callable/missingness
+   model is settled.
+
+The new script should make this choice explicit rather than silently mixing
+variable call rates with a single \(n\).
+
+## SFS Bins
+
+Current accession-level count:
+
+\[
+x_j = \text{number of accessions with at least one alternate allele}
+\]
+
+The current SFS can be folded:
+
+\[
+f_j = \min(x_j, n_j - x_j)
+\]
+
+Current bins:
+
+- 1
+- 2
+- 3-5
+- 6-10
+- 11-20
+- 21-50
+- 51-100
+- 101-200
+- 201-500
+- 501-1000
+- 1001+
+
+Design questions for the revised script:
+
+- Should the observed and simulated SFS remain accession-level, or switch to
+  allele-copy-level?
+- Should SFS bins be raw proportions among SNPs:
+
+\[
+\text{SFS bin proportion}_{b,R} =
+\frac{\#\{j \in R: f_j \in b\}}{S_R}
+\]
+
+  or densities per callable base?
+
+The current ABC feature set uses proportions among SNPs. A revised script can keep
+those for comparability and add density-normalized versions if useful.
+
+# Callable Denominator
+
+The key new quantity is \(C_R\), the number of callable bases in region \(R\).
+
+For complete simulations:
+
+\[
+C_R = L_R
+\]
+
+For all-sites observed VCFs:
+
+\[
+C_R = \sum_{j \in R} I(\text{site } j \text{ is callable})
+\]
+
+A site could be considered callable if:
+
+\[
+\frac{n_j}{n_{\text{target}}} \ge q
+\]
+
+where \(q\) is a minimum call-fraction threshold, such as 0.8.
+
+For an all-sites VCF, invariant records with `ALT=.` should contribute to \(C_R\)
+when callable. Variant records should also contribute to \(C_R\) when callable.
+Missing or low-call-fraction records should either be excluded from \(C_R\), or
+tracked separately.
+
+Suggested output columns:
+
+- `g_sites_total`, `i_sites_total`: interval lengths, preserved for compatibility.
+- `g_callable_sites`, `i_callable_sites`: callable denominators.
+- `g_missing_or_low_call_sites`, `i_missing_or_low_call_sites`: sites represented
+  but not passing callability filters.
+- `g_no_alt_sites`, `i_no_alt_sites`: callable invariant all-sites VCF records.
+- `g_variant_records`, `i_variant_records`: callable records with non-reference
+  alleles.
+
+# Genotype Counting
+
+Current method is accession-level:
+
+- `0/0` contributes called, alternate absent.
+- `0/1`, `1/0`, `1/1` contribute called, alternate present once.
+- Missing genotypes are not called.
+
+Accession-level derived count:
+
+\[
+x_j^{\text{acc}} =
+\sum_{i=1}^{n_j} I(\text{accession } i \text{ carries at least one alternate allele})
+\]
+
+Alternative allele-copy count:
+
+\[
+x_j^{\text{copy}} =
+\sum_{i=1}^{n_j} \text{number of alternate haplotypes in accession } i
+\]
+
+with sample size \(2n_j\) for diploids.
+
+Planning decision:
+
+- Preserve accession-level counting for continuity with the current ABC features,
+  unless the new method specifically switches to allele-copy counts.
+- If switching, document the change clearly because \(\pi\), SFS bins, singleton
+  definitions, and Tajima's D all change.
+
+# Proposed New Script Behavior
+
+The future new script should be separate from the old one, for example:
+
+- `scripts/calc_sim_stats_callable.py`
+- or `scripts/calc_sim_stats_v2.py`
+
+It should preserve the old script and old output files.
+
+Proposed behavior:
+
+1. Use the same interval files and genic/intergenic classification as the current
+   script.
+2. For tree-sequence simulations, treat all bases in intervals as callable.
+3. For all-sites observed VCFs, count callable sites directly from represented
+   records.
+4. Treat `ALT=.` records as invariant callable sites if they pass callability.
+5. Treat biallelic SNP records as segregating candidates.
+6. Exclude indels and multiallelic sites from SNP-based statistics unless a later
+   decision says otherwise.
+7. Output both legacy interval length and callable denominator.
+8. Normalize \(\pi\), \(\theta_W\), and SNP densities by callable sites.
+9. Make the Tajima's D handling explicit and conservative.
+
+# Open Decisions Before Coding
+
+1. Should the revised script calculate all observed statistics from all-sites VCF
+   records, or use a separate callable mask?
+2. Should \(\theta_W\) use a fixed \(n\) or site-specific \(n_j\)?
+3. Should Tajima's D be included for missing-data observed VCFs, and if so, should
+   it require complete calls after filtering?
+4. Should the SFS remain accession-level or switch to allele-copy-level?
+5. Should raw count features be retained, replaced by densities, or both?
+6. Should the new ABC target use only the new callable-normalized statistics, or
+   include both legacy and revised values for comparison?
+
+# Immediate Next Step
+
+Before writing code, specify the desired modifications to the statistic definitions.
+Once those are fixed, implement a new script without overwriting
+`scripts/calc_sim_stats.py`.

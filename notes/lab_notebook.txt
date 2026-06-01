@@ -1,0 +1,646 @@
+Lab Notebook
+============
+
+Rule for this file: every new entry should include the calendar date.
+Style note: keep entries concise and to the point without omitting methods,
+experimental design, or interpretation details needed to reconstruct the work.
+
+2026-05-07
+----------
+Summary of work from yesterday, 2026-05-06:
+
+Yesterday we focused on checking whether the posterior distributions, especially the
+mutation-rate posteriors, could be affected by a scaling issue in the SLiM/ABC
+pipeline. We reviewed how parameters are stored in the prior file, how they are
+scaled inside SLiM, and how they are plotted in the prior/posterior density figures.
+
+Key scaling notes so far:
+
+- The prior CSV stores biological-scale parameters: gmu, imu, gd, id, gdfe, and idfe.
+- SLiM scales mutation rates, selection coefficients, and recombination internally by
+  Q during simulation.
+- The ABC scripts use the original biological-scale parameter file for inference.
+- The prior/posterior density figures plot biological-scale ABC parameter values, not
+  SLiM-scaled values.
+- The plotting code uses visual axis transformations only, such as log10 mutation-rate
+  axes and absolute-value/log-style transforms for selection coefficients.
+- We did not find evidence that the density plots are being distorted by an internal
+  arithmetic error such as applying Q twice, plotting scaled values by accident, or
+  mixing scaled and unscaled parameters.
+
+Current multi-pronged analysis:
+
+1. Scaling issue check:
+   We are finishing an analysis to determine whether inferred posterior distributions
+   are affected by the Q scaling scheme or by the interaction between Q scaling and
+   strong deleterious selection coefficients.
+
+2. New chrom5 Q25 simulation set:
+   We are completing a new set of 100,000 chromosome 5 simulations with Q25. The goal
+   is to test whether using a smaller Q changes the posterior pattern, especially for
+   mutation-rate inference and DFE parameters.
+
+3. Cap analysis:
+   For both ABC approaches, rejection ABC and ABC-RF, and for both chromosomes 1 and
+   5, we are running a "cap analysis." In this analysis, simulations are removed if
+   their DFE parameter would become less than -1 after scaling. In other words, we
+   remove simulations where abs(gdfe) * Q > 1 or abs(idfe) * Q > 1, then rerun ABC.
+   The purpose is to see whether removing simulations with impossible or capped
+   scaled selection effects meaningfully changes the overall posterior pattern.
+
+Current interpretation:
+
+- If the capped/filtered analyses look similar to the original analyses, then the
+  posterior patterns are probably not being driven by the selection-coefficient cap.
+- If the capped/filtered analyses differ strongly, then the original posterior may be
+  sensitive to simulations where Q scaling pushed deleterious effects beyond the
+  interpretable SLiM range.
+- If the new Q25 chrom5 simulations give a different result from Q50, then Q itself
+  may be influencing the simulated summary statistics or the posterior inference.
+
+Open questions to track:
+
+- Why are inferred mutation-rate posteriors often one to two orders of magnitude
+  higher than expected?
+- Is recapitation affecting simulated diversity or the allele-frequency spectrum more
+  than expected?
+- Does neutral overlay correctly represent total versus deleterious mutation-rate
+  components?
+- Are observed and simulated summary statistics matched in sample size, chromosome
+  interval definitions, and filtering?
+- Do no-recap neutral-overlay controls produce meaningfully different rejection ABC
+  or ABC-RF posteriors?
+
+To-do list for 2026-05-07:
+
+1. Inspect summary statistics used by each ABC model.
+2. For ABC-RF, extract and compare variable-importance scores for each run/stat-set.
+   Goal: identify which simulated summary statistics are driving posterior estimates,
+   especially for gmu and imu.
+3. For rejection ABC, compare the distribution of each summary statistic among
+   accepted simulations against the observed 1001 Genomes value.
+   Goal: check whether accepted simulations actually match the real target statistics
+   or whether ABC is accepting simulations that match only some stats while missing
+   others.
+4. Add a recapitation test to compare inference results with and without recapitated
+   tree sequences.
+5. Investigate the heightened mutation-rate issue and whether it stems from scaling,
+   recapitation, or neutral-overlay implementation.
+
+Activity:
+(To Do Item 5):
+-confirmed that all stats are calculated from the correct derived trees folder
+
+2026-05-10
+----------
+To-do item 5 pipeline brainstorm: possible causes of heightened inferred mutation
+rates relative to empirical estimates.
+
+Pipeline checked end to end:
+
+1. Prior generation:
+   The prior files store biological-scale gmu and imu, usually drawn log-uniformly
+   from 1e-10 to 1e-7. This range includes empirical Arabidopsis-like rates but
+   also extends more than an order of magnitude above them, so ABC can choose high
+   mutation rates if high-SNP/high-pi simulations are closest to the observed target.
+
+2. SLiM forward simulation:
+   In models/ABCtrees.slim, SLiM simulates only the deleterious mutation component
+   forward:
+   gmu_del_sim = gmu * gd * Q
+   imu_del_sim = imu * id * Q
+   This is conceptually correct if gmu/imu are total biological mutation rates and
+   the neutral component is added later. I did not see a direct Q-applied-twice
+   error in SLiM itself. However, the scaled DFE can still indirectly affect inferred
+   mutation rates by changing how many deleterious mutations survive, especially
+   when gdfe * Q or idfe * Q is very negative and selection coefficients are capped
+   at -1.
+
+3. Post-SLiM Python step, highest-priority suspects:
+   scripts/trees_to_vcf.py overlays neutral mutations after optional recapitation:
+   gmu_neu = gmu * Q * (1 - gd)
+   imu_neu = imu * Q * (1 - id)
+   and calls msprime.mutate(..., keep=True). This is also conceptually correct under
+   the current split model because the final tree sequence should contain both the
+   forward-simulated deleterious component and the overlaid neutral component.
+   However, this step is the most important place to audit because small mismatches
+   here directly change simulated diversity.
+
+   Main concerns in this step:
+   - scripts/trees_to_vcf.sbatch and scripts/trees_vcf_tajima.sbatch default to
+     CHROM_DIR=chrom1 but default GENE_CSV, INTERGENE_CSV, and L are chromosome 5
+     values. If chromosome 1 jobs were run without overriding those environment
+     variables, the neutral overlay would use chromosome 5 intervals and length on
+     chromosome 1 tree sequences. That would distort region-specific mutation
+     placement and total mutable length. This is the strongest concrete pipeline
+     issue found so far.
+   - Recapitation uses NE_RECAP=6000 and RECOMB_RECAP=2e-6 for Q50 runs. These are
+     scaled values, matching NPOP=300000/50 and R_REAL*50, but this should be checked
+     for every Q-specific run. For Q25, the analogous values should be NPOP=12000 and
+     recombination 1e-6 unless there is a deliberate reason to use different values.
+   - Neutral mutations are added after recapitation, so recapitated deep branches can
+     add substantial neutral diversity. If recapitation parameters or generation/time
+     units are off, the overlaid neutral component could make simulated SNP counts too
+     high or alter the SFS, pushing ABC toward higher or lower mutation rates in a
+     compensatory way.
+   - The script keeps existing deleterious mutations when adding neutral mutations.
+     That is expected, but a no-neutral-overlay, neutral-only-overlay, and no-recap
+     control would help verify that the total realized mutation count is close to
+     gmu * Q and imu * Q on the scaled trees.
+
+4. Simulated summary statistics:
+   scripts/calc_sim_stats.py preferentially reads derived tree sequences when they
+   exist, then falls back to VCFs. That confirms the current simulated stats are
+   coming from trees_derived, not the raw SLiM tree folder. The stat code samples
+   1135 diploid individuals by default and folds the SFS in the sbatch wrapper.
+   Potential issues to keep on the list:
+   - The tree path uses variant.site.position + 1 before interval classification,
+     while SLiM/tree-sequence positions are naturally 0-based and the interval CSVs
+     appear to be used as SLiM coordinates. The VCF path uses POS directly. This
+     could create a one-base coordinate mismatch between tree-based simulated stats
+     and VCF-based observed stats. It is probably too small to explain an order of
+     magnitude mutation-rate shift by itself, but it is easy to test.
+   - The tree path counts a diploid accession as derived if either haplotype carries
+     the alternate allele. This matches the VCF accession-level counting style used
+     in count_accessions(), but it is not allele-count SFS. If the empirical estimate
+     assumes per-haplotype diversity, this could change pi/theta scaling.
+   - Simulated stats allow all nucleotide variants unless SNP_ONLY=1 is set. The
+     current simstats sbatch default is SNP_ONLY=0, while observed 1001 stats use
+     SNP_ONLY=1. If msprime/SLiM produces non-SNP nucleotide changes or multiallelic
+     sites, observed and simulated filters may not be exactly matched.
+
+5. Observed summary statistics:
+   observed_1001_simstats.sbatch subsets the empirical VCF to chromosome 1 or 5,
+   uses SNP_ONLY=1, allows incomplete calls with MIN_VCF_CALL_FRACTION=0.8, and
+   samples 1135 accessions. Simulated tree-based stats generally have complete
+   samples. Missing-data differences can affect singleton/SFS proportions and pi,
+   causing the ABC distance to prefer simulations with mutation rates that compensate
+   for filtering differences rather than true biological rates.
+
+6. ABC/rejection and ABC-RF:
+   The ABC scripts merge simulated summary statistics with the biological-scale
+   prior parameters by ID. They do not multiply gmu or imu by Q during inference or
+   plotting, so the high posteriors are not a simple plotting-scale artifact. The
+   rejection ABC distance z-scores all non-constant stats and uses Euclidean distance.
+   If observed SNP counts/pi/theta are outside or near the high end of the simulated
+   distribution, the accepted set will naturally concentrate at high gmu/imu. The
+   next diagnostic should compare observed values to the accepted and full simulated
+   distributions for g_snps, i_snps, g_pi, i_pi, g_theta_w, i_theta_w, and the SFS
+   bins.
+
+Most likely explanations to test first:
+
+1. Post-SLiM interval/length mismatch, especially chromosome 1 runs accidentally
+   using chromosome 5 GENE_CSV/INTERGENE_CSV/L defaults in trees_to_vcf.sbatch.
+2. Recapitation parameter mismatch across Q values, especially Q25 runs if NE_RECAP
+   and RECOMB_RECAP were not changed from Q50 defaults.
+3. Observed-versus-simulated stat filtering mismatch: SNP_ONLY, missing data,
+   accession-level rather than allele-level SFS, and complete versus incomplete
+   samples.
+4. ABC is correctly reporting biological-scale high mutation rates because observed
+   diversity/SNP summaries sit closest to high-mu simulations under the current
+   summary-statistic set.
+5. Selection/DFE scaling and capping alter the surviving deleterious load, causing
+   mutation rates to compensate indirectly, even without direct Q arithmetic errors.
+
+Concrete follow-up checks:
+
+- For a small set of IDs, count mutations in raw SLiM trees, recapitated-only trees,
+  neutral-overlaid trees, and no-recap neutral-overlaid trees. Compare realized
+  genic/intergenic mutation density to expected gmu*Q and imu*Q components.
+- Re-run trees_to_vcf.py for a chromosome 1 test ID with explicit chromosome 1
+  intervals and compare summary stats to the existing derived tree.
+- For Q25, confirm the post-SLiM job used Q=25, NE_RECAP=12000, and RECOMB_RECAP=1e-6
+  or document why Q50 recapitation values were retained.
+- Run calc_sim_stats.py on the same derived tree through both tree and VCF paths,
+  with SNP_ONLY matched, to quantify coordinate/filter/counting differences.
+- Plot observed stats against the full simulation distribution and accepted
+  posterior distribution for each stat used by rejection ABC and ABC-RF.
+
+Simplest-case refinement:
+
+The high inferred mutation-rate signal was already present in the original
+chromosome 5-only analysis, before adding other chromosomes or appending chr1+chr5
+simulation panels. Therefore, chromosome-mixing issues and chr1 interval-default
+problems cannot explain the original high-mu result. They remain pipeline hazards,
+but they are not the root cause of the simplest chrom5-only pattern.
+
+For the chrom5-only rejection ABC run, the posterior summaries are:
+- gmu median = 1.80e-8, mean = 2.13e-8
+- imu median = 2.58e-8, mean = 2.89e-8
+- gd median = 0.175
+- id median = 0.220
+
+Observed chrom5 summary statistics sit high relative to the chrom5 simulation panel:
+- g_snps: observed 14038, simulated median 1899, observed percentile 0.922
+- i_snps: observed 9426, simulated median 1069, observed percentile 0.913
+- g_pi: observed 0.003264, simulated median 0.000321, observed percentile 0.994
+- i_pi: observed 0.002831, simulated median 0.000324, observed percentile 0.969
+- g_theta_w: observed 0.007727, simulated median 0.001045, observed percentile 0.922
+- i_theta_w: observed 0.008942, simulated median 0.001014, observed percentile 0.913
+
+This means the simplest chrom5-only result is likely driven by the observed target
+having much more diversity than most simulations, especially for pi. Under the
+current fixed demography, selfing, recapitation, and summary-statistic definitions,
+ABC reaches high gmu/imu because those simulations are the ones that can approach
+the observed diversity.
+
+Most likely explanations for the simplest chrom5-only case:
+
+1. The fixed demographic model may underproduce neutral diversity for the empirical
+   1001 Genomes sample, forcing mutation-rate estimates upward.
+2. The fixed selfing rate, Ne, or recapitated ancestry may not match the empirical
+   diversity scale, again causing mu to compensate.
+3. The empirical mutation-rate estimate may not be directly comparable to the ABC
+   parameter if the empirical value is neutral/effectively neutral, lineage-specific,
+   per-generation under a different generation-time assumption, or genome-wide rather
+   than restricted to these intervals.
+4. Observed and simulated pi/theta/SFS definitions may still differ even in chrom5:
+   observed stats are from a SNP-only VCF with missing-data tolerance, while simulated
+   stats are usually calculated from complete derived tree sequences.
+5. Selection could indirectly push the posterior toward high total mutation rates
+   paired with low gd/id: accepted chrom5 simulations have lower deleterious
+   fractions than the prior, so much of the high total gmu/imu is effectively neutral
+   overlay rather than forward-simulated deleterious mutation.
+
+Population-structure task:
+
+Population structure in the 1001 Genomes target is now a leading explanation for
+the inflated observed diversity. The current simulations are effectively modeling a
+single randomly mating population with fixed selfing and demography, while the real
+1001 Genomes sample combines accessions from multiple geographic/genetic groups. If
+the observed sample mixes divergent groups, pairwise diversity, SNP count, theta,
+and the SFS can all become inflated relative to a single-population simulation.
+ABC may then compensate by choosing high mutation rates.
+
+Goal:
+Create one or more structure-reduced observed target datasets and rerun the same
+chrom5 ABC pipeline. If the inferred gmu/imu posterior shifts downward toward the
+empirical mutation-rate estimate, that would support population structure as a major
+cause of the original high-mu result.
+
+Possible approaches:
+
+1. Remove accessions likely to inflate between-population diversity.
+   First concrete test: remove North American and Cape Verde accessions from the
+   1001 Genomes VCF before calculating observed target statistics. These groups may
+   add deep between-group differences that the simple simulation model cannot
+   represent.
+
+2. Use a geographically/genetically narrower sample.
+   Instead of analyzing all 1135 accessions together, choose a relatively coherent
+   subset, such as one major regional group. Then recalculate observed stats and
+   downsample simulations to the same number of accessions.
+
+3. Compare full-sample versus filtered-sample summary statistics before rerunning ABC.
+   Key quantities to compare:
+   - g_pi and i_pi
+   - g_snps and i_snps
+   - g_theta_w and i_theta_w
+   - Tajima's D
+   - folded SFS proportions
+   If filtering removes structure, pi and SNP counts should drop, and the observed
+   target should move closer to the center of the simulated distribution.
+
+4. Run ABC on multiple observed targets:
+   - full 1001 sample
+   - no North America / no Cape Verde
+   - one or more within-region subsets
+   - possibly equal-size random subsamples from the full and filtered datasets
+   This will show whether high inferred mu is robust or mainly driven by structured
+   sampling.
+
+5. Longer-term modeling option:
+   Instead of filtering the observed data, add population structure to the simulation
+   model or use a demography inferred from structured Arabidopsis data. This is more
+   realistic but more work. The filtering analysis is the fastest diagnostic.
+
+Immediate next steps:
+
+- Find or build a metadata table mapping 1001 accessions to region/group.
+- Make a keep/exclude list for North American and Cape Verde accessions.
+- Subset the observed 1001 VCF to the keep list and chromosome 5.
+- Recalculate observed chrom5 target statistics using the same calc_sim_stats.py
+  workflow.
+- Rerun rejection ABC with the same chrom5 simulation table but the filtered observed
+  target.
+- Compare posterior gmu/imu and observed-stat percentiles against the full-sample
+  chrom5 run.
+
+Additional counting-convention test:
+
+- Run an allele-copy-level counting comparison for chrom5. The current summary-stat
+  workflow counts a diploid accession as carrying the derived allele if either
+  haplotype has the alternate allele, so heterozygous and homozygous alternate
+  genotypes both contribute one derived accession. Recalculate observed and simulated
+  chrom5 stats using allele-copy counts instead, where 0/1 contributes one derived
+  allele and 1/1 contributes two derived alleles. Compare pi, theta_w, SFS bins, and
+  the resulting rejection ABC gmu/imu posterior against the current accession-level
+  counting workflow.
+
+2026-05-10 activity:
+
+- Found the 1001 Genomes admixture/metadata table at
+  /group/gmonroegrp2/mlensink/1001data/1001_admixture.csv.
+- The 1001 Genomes VCF and index are being copied into the same 1001data
+  directory.
+- Added starter script scripts/admixture_parse.R for parsing the admixture
+  metadata and building accession keep lists.
+- Next goal is to use the metadata plus VCF to make two new less-structured
+  accession subsets as observed target datasets. New subset/output directories
+  can be created under /group/gmonroegrp2/mlensink/1001data alongside those
+  input files.
+
+2026-05-11 activity:
+
+- Defined two 1001 Genomes filtered observed-target subsets using
+  scripts/admixture_parse.R and the VCF-overlapping metadata in
+  /group/gmonroegrp2/mlensink/1001data.
+- central_europe_clean is intended to approximate a relatively homogeneous
+  nonrelict Central European panel. It includes 187 accessions from:
+  AUT=13, BEL=2, CZE=40, GER=116, NED=11, SUI=5.
+- global_no_outliers is a broader reduced-structure panel that excludes Iberian
+  relicts, Scandinavian populations, Asian populations, and Caucasus-associated
+  populations. It retains 635 accessions from:
+  AUT=13, BEL=2, BUL=28, CAN=2, CRO=2, CZE=40, EST=1, FRA=45, GER=116,
+  GRC=3, IRL=1, IRN=1, ITA=73, LTU=4, MAR=2, NED=11, POL=5, ROU=9,
+  RUS=60, SRB=9, SUI=5, SVK=7, TUR=1, UK=69, UKR=2, UNK=1, USA=123.
+
+2026-05-11 tonight: Task list
+
+1. ANALYZE SUMMARY STATS METHODS
+   [ ] Review SNPs, TD (Tajima's D), pi, and other diversity stats:
+       - Determine if they are calculated per bp or genome-wide
+       - Check definitions in calc_sim_stats.py and calc_sim_stats.R
+       - Verify consistency between tree-based and VCF-based calculations
+
+2. INVESTIGATE MISSING DATA / INVARIABLE SITES IN OBSERVED VCF
+   [ ] Compare data completeness: observed 1001 Genomes VCF vs. simulations
+       - Simulations have perfectly complete data
+       - Suspected missing data in 1001 dataset may affect diversity statistics
+       - This could explain observed-vs-simulated stat discrepancies
+   [ ] Access 1001 Genomes data resources:
+       https://1001genomes.org/data/GMI-MPI/releases/current/intersection_snp_short_indel_vcf_with_quality_reference/
+   [ ] Investigate PIXY tool: assess whether it can help impute/fill missing data
+       in the 1001 VCF
+
+3. CHECK PROGRESS ON NEW ADMIXTURE MODELS
+   [ ] Verify running analyses on new admixture structure models
+   [ ] Review job status and any completed results
+
+2026-05-13 activity:
+
+- Q25 chrom5 constant SLiM simulations are complete enough to begin downstream
+  processing.
+- Started the first downstream step: deriving neutral-overlaid/recapitated tree
+  sequences from the Q25 constant trees.
+- Input tree directory for this run:
+  /group/gmonroegrp2/mlensink/ABC_data/chrom5_Q25_constant/trees
+- Output derived-tree directory:
+  /group/gmonroegrp2/mlensink/ABC_data/chrom5_Q25_constant/trees_derived
+- Used the existing scripts/trees_to_vcf.sbatch pipeline rather than modifying the
+  downstream code. Submitted to the bml partition with:
+  PARAM_FILE=/home/mlensink/slimsimulations/ABCslim_trees/priors/priors_Q25_smax2e-2_2026-05-05.csv
+  CHROM_DIR=chrom5_Q25_constant
+  Q=25
+  RECAP=1
+  NE_RECAP=12000
+  RECOMB_RECAP=1e-6
+  WRITE_VCF=0
+- Submitted first 50k array chunk with OFFSET=0. Slurm job ID: 33230133.
+  Queue check showed the array active on bml with many tasks running.
+- The prior file has 100,000 data rows, so the second chunk still needs to be
+  submitted with OFFSET=50000 when ready. The attempted second submission was not
+  accepted in the approval flow, so it is not currently running.
+
+Sim-stats / invariant-site debugging focus:
+
+- Return to the observed-vs-simulation summary-stat discrepancy, especially how
+  invariable sites and missing sites are represented in the observed 1001 Genomes
+  VCF compared with complete simulated trees/VCFs.
+- Continue work in invariable_sites_1001_vcf_vs_sims.Rmd to quantify callable,
+  variable, invariable, and missing-site denominators for observed data versus
+  simulations.
+- Check whether pi, theta_w, SNP counts, SFS bins, and Tajima's D are being
+  normalized by the same effective sequence length in calc_sim_stats.py and the
+  observed-data workflow.
+- Determine whether missing/invariant-site treatment could explain the observed
+  discrepancy before changing ABC model assumptions.
+
+2026-05-13 additional activity:
+
+- Investigated the new 1001 Genomes VCF:
+  /group/gmonroegrp2/mlensink/1001data/1001genomes_snp-short-indel_with_tair10_only_ACGTN.vcf.gz
+- File size is about 133G and the file is BGZF-compressed. No sidecar index was
+  present initially:
+  1001genomes_snp-short-indel_with_tair10_only_ACGTN.vcf.gz.csi
+  1001genomes_snp-short-indel_with_tair10_only_ACGTN.vcf.gz.tbi
+- Confirmed that the VCF appears to be an all-sites VCF:
+  - Header is VCFv4.1 with genotype, genotype quality, and depth fields.
+  - First records are consecutive positions on chromosome 1 starting at 1.
+  - Early records include invariant reference sites with ALT=. and genotypes.
+  - First 10,000 data records spanned 1:1-10000 with zero coordinate gaps.
+  - Among those first 10,000 records, 9,159 had ALT=. and 841 had ALT not ".".
+- Confirmed that the simulated genome segments currently used for observed-data
+  extraction are:
+  - Chr1: 10000000-10284120
+  - Chr2: 18000000-18280622
+  - Chr3: 22000000-22349526
+  - Chr4: 2000000-2660337
+  - Chr5: 1-377208
+- bcftools and tabix are available in:
+  /home/mlensink/anaconda3/envs/singletons
+  Checked bcftools version: 1.9 with htslib 1.9.
+- Added scripts/extract_1001_allsites_segments.sbatch to index the large VCF with
+  bcftools index --csi if needed and then extract the five simulated regions with
+  bcftools view -Oz -r.
+- The extraction script writes compressed regional VCFs and CSI indexes to:
+  /home/mlensink/slimsimulations/ABCslim_trees/output/real_data_segments/vcf_subsets_all_sites_new
+  and writes a per-segment record-count summary:
+  segment_record_counts.tsv
+- Recommended running the extraction as a Slurm batch job on a normal compute or
+  serial partition. The script does not set --partition so it can be submitted with
+  the appropriate site-specific partition, for example:
+  sbatch -p <partition> scripts/extract_1001_allsites_segments.sbatch
+
+2026-05-13 end-of-day priority tracks:
+
+There are three active tracks that need to be finished by the end of the day:
+
+1. Finish the basic pipeline on chrom5 Q25 data.
+   - Once the chrom5_Q25_constant derived trees are complete, run the rest of the
+     existing downstream pipeline as-is.
+   - Goal is to produce a complete comparable chrom5 Q25 result set so we can test
+     for an effect of the scaling factor.
+   - Keep the pipeline unchanged for this pass so differences can be interpreted as
+     Q/scaling-factor effects rather than workflow changes.
+
+2. Clean and prepare the all-sites 1001 Genomes VCF target data.
+   - Finish any necessary indexing, regional extraction, validation, and cleaning
+     steps for:
+     /group/gmonroegrp2/mlensink/1001data/1001genomes_snp-short-indel_with_tair10_only_ACGTN.vcf.gz
+   - Extract the five simulated genome segments and confirm that the regional VCFs
+     preserve invariant sites and usable genotype fields.
+   - Make the resulting VCF subsets ready to use as observed ABC target data.
+
+3. Edit and update the new summary-statistic calculation methods.
+   - Make the requested changes to the new summary-stat workflow once the exact
+     edits are specified.
+   - Focus on correct handling of invariant sites, missing data, denominators, and
+     consistency between observed VCF target data and simulated data.
+   - Re-run or validate affected summary-stat calculations after the method edits.
+
+2026-05-13 track 1 update:
+
+- Began the next downstream step for chrom5 Q25 after derived trees completed.
+- Submitted the current/basic sim-stats pipeline as-is on bml for chrom5 Q25:
+  Slurm job ID 33387158
+  Job name simstats_Q25_chr5
+- Submission used the completed derived-tree directory:
+  /group/gmonroegrp2/mlensink/ABC_data/chrom5_Q25_constant/trees_derived
+- The simstats run covers IDs 1-90000 with 1000-ID chunks. Missing IDs are being
+  ignored/skipped rather than blocking progress.
+- Expected chunk output directory:
+  /group/gmonroegrp2/mlensink/ABC_data/simstats/chunks
+- Purpose is to finish the current basic pipeline for chrom5 Q25 without method
+  changes, so the result can be compared against the existing Q50 chrom5 output
+  to evaluate the effect of the scaling factor.
+
+2026-05-13 track 3 planning:
+
+- Decided not to overwrite the existing summary-statistic script. The old/current
+  pipeline should be preserved as the baseline.
+- Before writing a new calculation script, start with math and design planning in
+  a new R Markdown write-up.
+- Created a separate planning direction for a revised summary-stat workflow that
+  will be closely based on scripts/calc_sim_stats.py but modified to better handle
+  all-sites VCFs, missing data, callable denominators, and observed-vs-simulated
+  consistency.
+
+2026-05-13 statv2 ABC / Q25 update:
+
+- Added per-base-pair summary-statistic columns to all top-level simulation
+  summary-stat files in output/simstats, excluding output/simstats/chunks:
+  - g_snps_perbp = g_snps / g_sites_total
+  - i_snps_perbp = i_snps / i_sites_total
+  - g_singletons_perbp = g_singletons / g_sites_total
+  - i_singletons_perbp = i_singletons / i_sites_total
+  - g_doubletons_perbp = g_doubletons / g_sites_total
+  - i_doubletons_perbp = i_doubletons / i_sites_total
+- Added/refreshed the same per-base-pair columns in all observed target-stat files
+  in output/ABC_results/observed:
+  - target_stats_chrom1.csv
+  - target_stats_chrom5.csv
+  - target_stats_central_europe_clean_chrom1.csv
+  - target_stats_central_europe_clean_chrom5.csv
+- Confirmed that chrom5 Q25 ABC should use the standard observed target statistics
+  file output/ABC_results/observed/target_stats_chrom5.csv, while using the Q25
+  simulated reference table output/simstats/sim_stats_chrom5_Q25.csv and Q25 prior
+  priors/priors_Q25_smax2e-2_2026-05-05.csv.
+- Updated scripts/rejection_abc_chr5.R so rejection ABC can:
+  - use environment-variable overrides for input simstats, target stats, prior file,
+    output directory, and figure directory;
+  - write the accepted-simulation summary-statistic histogram figure as part of the
+    normal rejection run;
+  - run a statv2 per-bp base statistic set with only:
+    g_snps_perbp, i_snps_perbp, g_td, i_td.
+- Updated scripts/abcrf_chr5.R so ABCRF can:
+  - use environment-variable overrides for input simstats, target stats, prior file,
+    output directory, and figure directory;
+  - write prior/posterior, mutation-rate posterior, and variable-importance figures
+    into the requested figure directory;
+  - run ABC_STAT_VERSION=v2, replacing raw count statistics with per-bp versions:
+    g_snps -> g_snps_perbp, i_snps -> i_snps_perbp,
+    g_singletons -> g_singletons_perbp, i_singletons -> i_singletons_perbp,
+    g_doubletons -> g_doubletons_perbp, i_doubletons -> i_doubletons_perbp;
+  - apply those replacements to every named ABCRF stat set where those count
+    statistics appear: base, core, core_contrast, and core_sfs;
+  - additionally exclude the raw count columns from the all_variable ABCRF stat set
+    under v2 so all_variable also uses only the per-bp versions.
+- Ran the initial chrom5 Q25 ABC analyses:
+  - Rejection ABC using Q25 simstats and Q25 priors, output:
+    output/ABC_results/rejection_chr5_Q25
+  - Figures were written to:
+    figures/chrom5_q25
+  - Added the accepted posterior summary-statistic histogram figure to the usual
+    rejection output set.
+  - Submitted ABCRF jobs for chrom5 Q25 across the usual stat sets. Representative
+    logs confirmed the Q25 simulated reference table and Q25 prior were used.
+- Ran an additional chrom5 Q25 rejection-only sensitivity run using only raw SNP
+  counts and Tajima's D:
+  - Summary statistics used: g_snps, i_snps, g_td, i_td
+  - Slurm job ID: 33389594
+  - Output directory:
+    output/ABC_results/rejection_chr5_Q25_base
+  - Figures written to:
+    figures/chrom5_q25
+- Submitted statv2 ABC reruns for five analysis cases:
+  - chr1
+  - chr5
+  - chr1_central_europe_clean
+  - chr5_central_europe_clean
+  - chr5_Q25
+- For all statv2 rejection ABC runs, used only:
+  g_snps_perbp, i_snps_perbp, g_td, i_td.
+- For all statv2 ABCRF runs, submitted every stat set:
+  base, core, core_contrast, core_sfs, all_variable.
+- Statv2 result and figure roots:
+  - Results: output/ABC_results_statv2
+  - Figures: figures_statv2
+- Submitted statv2 Slurm jobs 33389607 through 33389636.
+  Rejection jobs completed quickly and wrote result files under
+  output/ABC_results_statv2. Representative ABCRF logs confirmed that v2 stat sets
+  use per-bp columns, for example:
+  - base: g_snps_perbp, i_snps_perbp, g_td, i_td
+  - core: g_snps_perbp, i_snps_perbp, pi, theta_w, Tajima's D,
+    g/i singletons per bp, and g/i doubletons per bp
+
+2026-05-20
+- Began reorganizing ABC tree and summary-statistic storage because of updated storage allocation rules.
+- New long-term data storage root:
+  /group/gmonroegrp2/mlensink/ABC_data
+- Existing diepenbrock source project root:
+  /group/diepenbrockroot/mlensink/slimsimulations/ABCslim_trees
+- Created the new ABC_data organization with chromosome-specific directories:
+  chrom1 through chrom5 each contain simstats, trees, and trees_derived.
+  The already-moved chrom5_Q25_constant directory was left separate and was not included in the constant-run migration scripts.
+- Wrote /home/mlensink/copy_constant_trees_to_gmonroegrp2.sbatch to copy the constant-run tree outputs from:
+  /group/diepenbrockroot/mlensink/slimsimulations/ABCslim_trees/output/constant
+  into:
+  /group/gmonroegrp2/mlensink/ABC_data/chrom*/trees
+  and:
+  /group/gmonroegrp2/mlensink/ABC_data/chrom*/trees_derived
+- The tree-copy script uses rsync, skips missing chromosome/source directories, and runs multiple rsync jobs in parallel. It was submitted and running.
+- Wrote /home/mlensink/copy_simstats_abc_to_gmonroegrp2.sbatch to copy:
+  - simstats from output/simstats into ABC_data/chrom*/simstats;
+  - ABCRF result directories from output/ABC_results and output/ABC_results_statv2 into ABC_data/randomforestABC;
+  - rejection ABC result directories from output/ABC_results and output/ABC_results_statv2 into ABC_data/rejectionABC.
+- Preserved ABC_results and ABC_results_statv2 as separate subdirectories under randomforestABC and rejectionABC to avoid merging same-named result folders.
+- Noted that sim_stats_chrom1_chrom5_appended.csv matches both chrom1 and chrom5 and will be copied into both chromosome simstats directories.
+- Added the Slurm directives below to both copy scripts:
+  #SBATCH --account=gmonroegrp
+  #SBATCH --partition=bmh
+- The copy scripts support dry runs with:
+  sbatch --export=DRY_RUN=1 <script>
+
+2026-05-26
+- Started the first 50k chunk for chrom2 using priors_2.6.25.csv.
+- Added a detailed methods note for the new summary-statistic script:
+  notes/calc_sim_stats_v2_methods.md
+- The new script, scripts/calc_sim_stats_v2.py, is additive and leaves
+  scripts/calc_sim_stats.py unchanged. It uses tskit/pyslim for tree-sequence
+  simulations and a hybrid vcftools + Python aggregation path for VCF inputs.
+- V2 statistics are allele-copy based for SNP count, singleton count, doubleton
+  count, and SFS bins. Genic and intergenic intervals are handled as separate
+  concatenated interval sets with independent denominators.
+- For tree-sequence simulations, callable_sites equals sites_total because the
+  simulated intervals are treated as complete. For VCF inputs, callable_sites is
+  only a base-pair denominator when CALLABLE_MASK is provided; otherwise VCF mode
+  reports callable/low-call record diagnostics but cannot infer invariant
+  callable bases from a variant-only VCF.
+- Chromosome 5 tree-mode smoke test passed for IDs 1-3 using:
+  DERIVED_DIR=/group/gmonroegrp2/mlensink/ABC_data/chrom5/trees_derived,
+  SAMPLE_INDIVIDUALS=1135, FOLD_SFS=1.
+  Output: /tmp/sim_stats_v2_chrom5_1_3.csv
+  The output had 3 rows and 43 columns, and genic/intergenic SFS proportions
+  summed to 1.0 for all tested IDs.
